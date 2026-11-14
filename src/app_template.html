@@ -100,6 +100,7 @@
   .gate-box { max-width: 440px; text-align: center; padding: 32px 20px; }
   .gate-ico { font-size: 44px; margin-bottom: 8px; }
   .gate-box h2 { margin: 0 0 12px; }
+  .chk { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--fg, inherit); }
   .team-row, .hist-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
   .team-row > span:first-child, .hist-row > div:first-child { flex: 1; min-width: 160px; }
   .team-inv { display: grid; gap: 6px; padding: 8px 0 12px; font-size: 14px; }
@@ -938,6 +939,11 @@ function bindHeader() {
 }
 
 /* ======================= экран: список песен ======================= */
+function teamBtnLabel() {
+  if (!CLOUD) return state.admin ? "Админ: выйти" : "Вход для админа";
+  if (!ME) return "Вход для команды";
+  return "Команда" + (state.admin ? " и приглашения" + (cloud.pending ? ` · <b>ждут одобрения: ${cloud.pending}</b>` : "") : ": " + esc(ME.name));
+}
 function renderList() {
   document.title = "Песни прославления";
   const counts = { all: SONGS.length };
@@ -983,7 +989,7 @@ function renderList() {
       ${ALL_TAGS.length ? `<div class="filters">${ALL_TAGS.map(t => `<button class="chip tagchip ${state.tag === t ? "on" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : ""}
     </div></header>
     <main class="wrap"><ul class="list" id="list"></ul><div id="localNote"></div><div id="syncNote"></div>
-      <div class="admin-link"><button id="adminBtn">${CLOUD ? (ME ? "Команда" + (state.admin ? " и приглашения" : ": " + esc(ME.name)) : "Вход для команды") : state.admin ? "Админ: выйти" : "Вход для админа"}</button></div></main>`;
+      <div class="admin-link"><button id="adminBtn">${teamBtnLabel()}</button></div></main>`;
   bindHeader();
   const input = document.getElementById("q");
   input.addEventListener("input", () => { state.q = input.value; document.getElementById("searchBox").classList.toggle("has-q", !!state.q); fillList(); });
@@ -2226,7 +2232,7 @@ function show(id, { keepCtx = false } = {}) {
   if (!keepCtx) state.ctx = null;
   if (current === "list") state.listScroll = scrollY;
   currentId = id || "";
-  if (CLOUD && !ME) { current = "gate"; renderGate(); return; }
+  if (CLOUD && !isMember()) { current = "gate"; currentId = ""; renderGate(); return; }
   if ((id === "new" || (id && id.startsWith("edit-"))) && !canEdit()) { needEdit(); id = id === "new" ? "" : id.slice(5); currentId = id; }
   if (id === "new") { current = "edit"; renderEditor(null); }
   else if (id && id.startsWith("edit-")) { const s = songById(id.slice(5)); current = "edit"; s ? renderEditor(s) : renderList(); }

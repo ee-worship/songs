@@ -100,6 +100,7 @@
   .gate-box { max-width: 440px; text-align: center; padding: 32px 20px; }
   .gate-ico { font-size: 44px; margin-bottom: 8px; }
   .gate-box h2 { margin: 0 0 12px; }
+  .chk { display: flex; gap: 8px; align-items: center; font-size: 14px; color: var(--fg, inherit); }
   .team-row, .hist-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
   .team-row > span:first-child, .hist-row > div:first-child { flex: 1; min-width: 160px; }
   .team-inv { display: grid; gap: 6px; padding: 8px 0 12px; font-size: 14px; }
@@ -654,7 +655,7 @@ function todayISO() { const d = new Date(); return new Date(d - d.getTimezoneOff
 const ROW_DEFAULTS = { title_alt: "", original: "", key: "", play_shift: 0, capo: 0, notes: "", lang: "ru", lyrics: "", chord_chart: "", translit: [], tags: [], links: [], status: "proposed", review: [] };
 let db = null, ME = null;
 const cloud = {
-  songs: null, sets: null, queue: [], online: true, syncing: false, lastFetch: 0, ready: false,
+  songs: null, sets: null, queue: [], online: true, syncing: false, lastFetch: 0, ready: false, pending: 0,
 };
 if (CLOUD) {
   cloud.songs = store.get("cloud:songs", null);
@@ -663,7 +664,8 @@ if (CLOUD) {
   ME = store.get("cloud:me", null);
   state.admin = ME?.role === "admin";
 }
-const canEdit = () => !CLOUD || !!ME;
+const isMember = () => !!ME && ME.role !== "pending";
+const canEdit = () => !CLOUD || isMember();
 function needEdit() {
   if (canEdit()) return true;
   modal(`<h3>Только для команды</h3>
@@ -742,7 +744,7 @@ async function flushQueue() {
 }
 
 async function cloudFetch() {
-  if (!db || !ME) return false;
+  if (!db || !isMember()) return false;
   const [a, b] = await Promise.all([
     db.from("songs").select("*").range(0, 4999),
     db.from("setlists").select("*").range(0, 4999),
@@ -751,6 +753,10 @@ async function cloudFetch() {
   cloud.online = true; cloud.lastFetch = Date.now();
   cloud.songs = a.data; cloud.sets = b.data.map(setFromRow);
   cloud.queue.forEach(applyOp); // неотправленные правки поверх свежих данных
+  if (state.admin) {
+    const c = await db.from("members").select("user_id", { count: "exact", head: true }).eq("role", "pending");
+    if (!c.error) cloud.pending = c.count || 0;
+  }
   persistCloud(); loadSongs(); cloud.ready = true;
   refreshView(); return true;
 }
@@ -766,15 +772,49 @@ function onLive(t, p) {
 // без приглашения сайт закрыт: показываем только эту страницу
 function renderGate() {
   document.title = "Песни команды";
+  const pending = ME?.role === "pending";
   app.innerHTML = `<main class="wrap gate">
     <div class="gate-box">
-      <div class="gate-ico">🎵</div>
+      <div class="gate-ico">${pending ? "⏳" : "🎵"}</div>
       <h2>Песни команды прославления</h2>
-      <p class="muted">Сайт закрытый. Чтобы открыть песни, нужна ссылка-приглашение — попросите её у руководителя команды и откройте на этом устройстве.</p>
-      <p class="muted" style="font-size:13px">Уже входили раньше? Если вы очистили браузер или открыли сайт на новом устройстве, просто откройте ссылку-приглашение ещё раз.</p>
-      <button class="icon-btn" data-theme-btn title="Тема">${state.theme === "dark" ? ICON.sun : ICON.moon}</button>
+      ${pending ? `<p><b>${esc(ME.name)}</b>, ваша заявка отправлена.</p>
+        <p class="muted">Как только руководитель её одобрит, песни откроются здесь сами — страницу можно не закрывать.</p>
+        <button class="btn" id="gateCheck">Проверить</button>`
+      : `<p class="muted">Сайт закрытый. Чтобы открыть песни, нужна ссылка-приглашение — попросите её у руководителя команды и откройте на этом устройстве.</p>
+        <p class="muted" style="font-size:13px">Уже входили раньше? Если вы очистили браузер или открыли сайт на новом устройстве, просто откройте ссылку-приглашение ещё раз.</p>`}
+      <div style="margin-top:18px;display:flex;gap:8px;justify-content:center;align-items:center">
+        <button class="icon-btn" data-theme-btn title="Тема">${state.theme === "dark" ? ICON.sun : ICON.moon}</button>
+      </div>
+      <div class="admin-link" style="margin-top:22px"><button id="adminLogin">Вход для админа</button></div>
     </div></main>`;
   document.querySelectorAll("[data-theme-btn]").forEach(b => b.onclick = toggleTheme);
+  document.getElementById("adminLogin").onclick = adminLoginDialog;
+  document.getElementById("gateCheck")?.addEventListener("click", async () => { await refreshMe(); if (ME?.role === "pending") toast("Пока не одобрено"); });
+}
+function adminLoginDialog() {
+  modal(`<h3>Вход для админа</h3>
+    <div class="field"><label>Почта</label><input id="al_email" type="email" autocomplete="username"></div>
+    <div class="field"><label>Пароль</label><input id="al_pass" type="password" autocomplete="current-password"></div>
+    <div class="actions"><button class="btn" data-x>Отмена</button><button class="btn primary" data-ok>Войти</button></div>`, (m, close) => {
+    const em = m.querySelector("#al_email"), pw = m.querySelector("#al_pass"), okBtn = m.querySelector("[data-ok]");
+    setTimeout(() => em.focus(), 50);
+    m.querySelector("[data-x]").onclick = close;
+    const ok = async () => {
+      if (!db) return toast("Нет связи с базой");
+      if (!em.value.trim() || !pw.value) return toast("Введите почту и пароль");
+      okBtn.disabled = true;
+      try {
+        const { error } = await db.auth.signInWithPassword({ email: em.value.trim(), password: pw.value });
+        if (error) return toast(/invalid/i.test(error.message) ? "Неверная почта или пароль" : "Не получилось: " + error.message);
+        await refreshMe();
+        if (!isMember()) { await db.auth.signOut(); return toast("У этого аккаунта нет доступа"); }
+        close(); toast(`Здравствуйте, ${ME.name}!`);
+        await cloudFetch(); show(currentId);
+      } finally { okBtn.disabled = false; }
+    };
+    okBtn.onclick = ok;
+    pw.onkeydown = e => { if (e.key === "Enter") ok(); };
+  });
 }
 function forgetCloudData() {
   cloud.songs = null; cloud.sets = null; cloud.queue = [];
@@ -785,9 +825,12 @@ let refreshPending = false;
 function refreshView() {
   if (current === "edit" || document.querySelector(".modal-bg") || proj || document.getElementById("stage") || openMenu) { refreshPending = true; return; }
   refreshPending = false;
-  if (!ME) { if (current !== "gate") show(""); return; }
+  if (!isMember()) { show(""); return; }
   const y = scrollY;
-  if (current === "list") { if (document.activeElement?.id === "q") fillList(); else { renderList(); scrollTo(0, y); } }
+  if (current === "list") {
+    if (document.activeElement?.id === "q") { fillList(); const ab = document.getElementById("adminBtn"); if (ab) ab.innerHTML = teamBtnLabel(); updateSyncNote(); }
+    else { renderList(); scrollTo(0, y); }
+  }
   else { show(currentId, { keepCtx: !!state.ctx }); scrollTo(0, y); }
 }
 setInterval(() => { if (refreshPending) refreshView(); }, 1500);
@@ -795,11 +838,12 @@ setInterval(() => { if (refreshPending) refreshView(); }, 1500);
 async function refreshMe() {
   const { data, error, status } = await db.rpc("whoami");
   if (error && !(status >= 400 && status < 500)) return; // нет связи — оставляем как было
-  const was = JSON.stringify(ME);
+  const was = JSON.stringify(ME), wasMember = isMember();
   ME = error ? null : data || null;
   state.admin = ME?.role === "admin";
   store.set("cloud:me", ME);
-  if (!ME) forgetCloudData();
+  if (!isMember()) forgetCloudData();
+  if (isMember() && !wasMember) { await cloudFetch(); toast("Доступ открыт — добро пожаловать!"); }
   if (JSON.stringify(ME) !== was) refreshView();
 }
 
@@ -808,7 +852,8 @@ async function cloudInit() {
   db = window.supabase.createClient(CLOUD.url, CLOUD.key, { auth: { persistSession: true, autoRefreshToken: true, storageKey: "songs-auth" } });
   const { data: { session } } = await db.auth.getSession();
   if (session) await refreshMe(); else if (ME) { ME = null; state.admin = false; store.set("cloud:me", null); forgetCloudData(); }
-  if (!ME) show(currentId);
+  if (!isMember()) show(currentId);
+  setInterval(() => { if (ME?.role === "pending" && !document.hidden) refreshMe(); }, 15000);
   const code = new URLSearchParams(location.search).get("join");
   if (code) joinDialog(code);
   await cloudFetch();
@@ -849,6 +894,7 @@ function joinDialog(code) {
         if (error) return toast(/invalid invite/.test(error.message) ? "Ссылка устарела — попросите у руководителя новую" : "Ошибка: " + error.message);
         ME = data; state.admin = ME?.role === "admin"; store.set("cloud:me", ME);
         cleanJoinUrl(); close();
+        if (ME?.role === "pending") { toast("Заявка отправлена — ждите одобрения"); show(""); return; }
         toast(`Добро пожаловать, ${name}!${state.admin ? " Вы админ." : ""}`);
         await cloudFetch(); show(currentId);
       } finally { okBtn.disabled = false; okBtn.textContent = "Войти в команду"; }
@@ -877,7 +923,8 @@ async function teamDialog() {
   modal(`<h3>Команда</h3>
     <div class="field"><label>Ваше имя</label><div style="display:flex;gap:8px"><input id="myName" maxlength="60" value="${esc(ME.name)}"><button class="btn" id="saveName">Сохранить</button></div>
       <div class="muted" style="font-size:12px;margin-top:4px">${ME.role === "admin" ? "Вы админ" : "Вы в команде: можно добавлять и править песни и сет-листы"}</div></div>
-    ${state.admin ? `<div class="field"><label>Ссылки-приглашения</label><div id="invites" class="muted">Загружаю…</div></div>
+    ${state.admin ? `<div class="field"><label>Новые участники</label><div id="pendingBox" class="muted">Загружаю…</div></div>
+      <div class="field"><label>Ссылка-приглашение</label><div id="invites" class="muted">Загружаю…</div></div>
       <div class="field"><label>Участники</label><div id="members" class="muted">Загружаю…</div></div>
       <div class="field"><button class="btn" id="todoBtn">📝 Что доделать в песнях</button></div>` : ""}
     ${deleted.length ? `<div class="field"><label>Удалённые песни</label>${deleted.map(s => `<div class="team-row"><span dir="auto">${esc(s.title)}</span><span class="muted">${fmtWhen(s.deleted_at || s.updated_at)}${s.updated_by_name ? " · " + esc(s.updated_by_name) : ""}</span><button class="btn" data-restore="${esc(s.id)}">Вернуть</button></div>`).join("")}</div>` : ""}
@@ -903,8 +950,21 @@ async function teamDialog() {
       const { data, error } = await db.from("invites").select("*");
       const box = m.querySelector("#invites"); if (!box) return;
       if (error) return box.textContent = "Не удалось загрузить: " + error.message;
-      const label = { editor: "Для команды (редакторы)", admin: "Для админов — никому не пересылайте" };
-      box.innerHTML = ["editor", "admin"].map(r => data.find(x => x.role === r)).filter(Boolean).map(inv => `
+      const label = { editor: "Для команды", admin: "Для админов — никому не пересылайте" };
+      const ed = data.find(x => x.role === "editor");
+      const pb = m.querySelector("#pendingBox");
+      if (pb && ed) {
+        pb.innerHTML = `<label class="chk"><input type="checkbox" id="reqAppr" ${ed.require_approval ? "checked" : ""}> Одобрять новых вручную</label>
+          <div class="muted" style="font-size:12px">${ed.require_approval ? "Кто откроет ссылку, сначала попадёт сюда — и получит доступ, когда вы нажмёте «Принять»." : "Сейчас любой со ссылкой сразу получает доступ."}</div>
+          <div id="pendingList"></div>`;
+        pb.querySelector("#reqAppr").onchange = async e => {
+          const { error } = await db.rpc("set_require_approval", { p_on: e.target.checked });
+          if (error) { e.target.checked = !e.target.checked; return toast("Не получилось: " + error.message); }
+          toast(e.target.checked ? "Теперь новых нужно одобрять" : "Одобрение выключено"); loadInvites();
+        };
+        loadPending();
+      }
+      box.innerHTML = ["editor", "admin"].map(r => data.find(x => x.role === r && x.active)).filter(Boolean).map(inv => `
         <div class="team-inv"><div><b>${label[inv.role]}</b><span class="muted"> · входили по ней: ${inv.uses}</span></div>
           <input readonly value="${esc(base + "?join=" + inv.code)}">
           <div style="display:flex;gap:8px"><button class="btn" data-copy="${esc(base + "?join=" + inv.code)}">Скопировать</button><button class="btn" data-rot="${inv.role}">Новая ссылка</button></div></div>`).join("");
@@ -915,8 +975,28 @@ async function teamDialog() {
         toast("Новая ссылка готова"); loadInvites();
       }));
     };
+    const loadPending = async () => {
+      const box = m.querySelector("#pendingList"); if (!box) return;
+      const { data, error } = await db.from("members").select("*").eq("role", "pending").order("joined_at");
+      if (error) return box.textContent = "Не удалось загрузить: " + error.message;
+      cloud.pending = data.length;
+      box.innerHTML = data.length ? data.map(u => `<div class="team-row"><span><b>${esc(u.name)}</b> ждёт одобрения</span><span class="muted">${fmtWhen(u.joined_at)}</span>
+        <button class="btn primary" data-appr="${u.user_id}">Принять</button><button class="btn" data-rej="${u.user_id}">Отклонить</button></div>`).join("")
+        : `<div class="muted" style="font-size:13px;margin-top:6px">Заявок нет.</div>`;
+      box.querySelectorAll("[data-appr]").forEach(b => b.onclick = async () => {
+        const { error } = await db.from("members").update({ role: "editor" }).eq("user_id", b.dataset.appr);
+        if (error) return toast("Не получилось: " + error.message);
+        toast("Принят в команду"); loadPending(); loadMembers();
+      });
+      box.querySelectorAll("[data-rej]").forEach(b => b.onclick = async () => {
+        const { error } = await db.from("members").delete().eq("user_id", b.dataset.rej);
+        if (error) return toast("Не получилось: " + error.message);
+        toast("Заявка отклонена"); loadPending();
+      });
+    };
     const loadMembers = async () => {
-      const { data, error } = await db.from("members").select("*").order("joined_at");
+      const { data: all, error } = await db.from("members").select("*").order("joined_at");
+      const data = (all || []).filter(u => u.role !== "pending");
       const box = m.querySelector("#members"); if (!box) return;
       if (error) return box.textContent = "Не удалось загрузить: " + error.message;
       box.innerHTML = data.map(u => `<div class="team-row"><span>${esc(u.name)}${u.role === "admin" ? ' <span class="pill">админ</span>' : ""}</span>
@@ -1267,6 +1347,11 @@ function bindHeader() {
 }
 
 /* ======================= экран: список песен ======================= */
+function teamBtnLabel() {
+  if (!CLOUD) return state.admin ? "Админ: выйти" : "Вход для админа";
+  if (!ME) return "Вход для команды";
+  return "Команда" + (state.admin ? " и приглашения" + (cloud.pending ? ` · <b>ждут одобрения: ${cloud.pending}</b>` : "") : ": " + esc(ME.name));
+}
 function renderList() {
   document.title = "Песни прославления";
   const counts = { all: SONGS.length };
@@ -1312,7 +1397,7 @@ function renderList() {
       ${ALL_TAGS.length ? `<div class="filters">${ALL_TAGS.map(t => `<button class="chip tagchip ${state.tag === t ? "on" : ""}" data-tag="${esc(t)}">${esc(t)}</button>`).join("")}</div>` : ""}
     </div></header>
     <main class="wrap"><ul class="list" id="list"></ul><div id="localNote"></div><div id="syncNote"></div>
-      <div class="admin-link"><button id="adminBtn">${CLOUD ? (ME ? "Команда" + (state.admin ? " и приглашения" : ": " + esc(ME.name)) : "Вход для команды") : state.admin ? "Админ: выйти" : "Вход для админа"}</button></div></main>`;
+      <div class="admin-link"><button id="adminBtn">${teamBtnLabel()}</button></div></main>`;
   bindHeader();
   const input = document.getElementById("q");
   input.addEventListener("input", () => { state.q = input.value; document.getElementById("searchBox").classList.toggle("has-q", !!state.q); fillList(); });
@@ -3101,7 +3186,7 @@ function show(id, { keepCtx = false } = {}) {
   if (!keepCtx) state.ctx = null;
   if (current === "list") state.listScroll = scrollY;
   currentId = id || "";
-  if (CLOUD && !ME) { current = "gate"; renderGate(); return; }
+  if (CLOUD && !isMember()) { current = "gate"; currentId = ""; renderGate(); return; }
   if ((id === "new" || (id && id.startsWith("edit-"))) && !canEdit()) { needEdit(); id = id === "new" ? "" : id.slice(5); currentId = id; }
   if (id === "new") { current = "edit"; renderEditor(null); }
   else if (id && id.startsWith("edit-")) { const s = songById(id.slice(5)); current = "edit"; s ? renderEditor(s) : renderList(); }
