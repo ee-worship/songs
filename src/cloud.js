@@ -276,6 +276,7 @@ async function teamDialog() {
     ${state.admin ? `<div class="sect"><div class="sect-h">Новые участники</div><div id="pendingBox" class="muted">Загружаю…</div></div>
       <div class="sect"><div class="sect-h">Ссылка-приглашение</div><div id="invites" class="muted">Загружаю…</div></div>
       <div class="sect"><div class="sect-h">Участники</div><div id="members" class="muted">Загружаю…</div></div>
+      <div class="sect"><div class="sect-h">AI-агент</div><div id="aiUsage" class="muted" style="font-size:14px">Загружаю…</div></div>
       <div class="sect"><button class="btn" id="todoBtn">📝 Что доделать в песнях</button></div>` : ""}
     ${deleted.length ? `<div class="sect"><div class="sect-h">Удалённые песни</div>${deleted.map(s => `<div class="team-row"><span dir="auto">${esc(s.title)}</span><span class="muted">${fmtWhen(s.deleted_at || s.updated_at)}${s.updated_by_name ? " · " + esc(s.updated_by_name) : ""}</span><button class="btn" data-restore="${esc(s.id)}">Вернуть</button></div>`).join("")}</div>` : ""}
     <div class="actions"><button class="btn" id="logout">Выйти на этом устройстве</button><button class="btn primary" data-x>Готово</button></div>`, (m, close) => {
@@ -362,6 +363,7 @@ async function teamDialog() {
       }));
     };
     loadInvites(); loadMembers();
+    aiUsageHtml().then(h => { const el = m.querySelector("#aiUsage"); if (el) el.innerHTML = h; });
   });
 }
 

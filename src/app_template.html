@@ -100,6 +100,11 @@
   .todo-item .acts { display: flex; gap: 6px; flex-wrap: wrap; }
   .todo-item .acts .btn { min-height: 30px; padding: 3px 9px; font-size: 13px; }
   .admin-link { text-align: center; margin: 0 0 30px; }
+  .ai-banner { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 12px; padding: 10px 14px; font-size: 14px; }
+  .ai-wait { display: flex; gap: 14px; align-items: center; margin-top: 6px; }
+  .ai-spin { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: aispin 0.9s linear infinite; flex-shrink: 0; }
+  @keyframes aispin { to { transform: rotate(360deg); } }
+  .ai-opts { display: grid; gap: 10px; margin-top: 14px; }
   .gate { min-height: 80vh; display: grid; place-items: center; }
   .gate-box { max-width: 440px; text-align: center; padding: 32px 20px; }
   .gate-ico { font-size: 44px; margin-bottom: 8px; }
@@ -976,6 +981,7 @@ function renderList() {
           <div class="menu" id="addMenu">
             <button class="mi" data-act="new">${ICON.edit}Новая песня — текст, PDF или скриншот</button>
             <button class="mi" data-act="pdf">${ICON.up}Из PDF или скриншотов (можно несколько)</button>
+            ${CLOUD ? `<button class="mi" data-act="ai">✨ По ссылке или названию (AI)</button>` : ""}
           </div>
         </div>
         <div class="menu-wrap">
@@ -1032,7 +1038,7 @@ function renderList() {
   const keySel = document.getElementById("keySel");
   keySel.onchange = () => { state.key = keySel.value; keySel.classList.toggle("on", !!state.key); fillList(); };
   document.getElementById("adminBtn").onclick = adminDialog;
-  setupMenu("addBtn", "addMenu", act => { if (!needEdit()) return; if (act === "new") go("new"); if (act === "pdf") importPdfDialog(); });
+  setupMenu("addBtn", "addMenu", act => { if (!needEdit()) return; if (act === "new") go("new"); if (act === "pdf") importPdfDialog(); if (act === "ai") aiImportDialog(); });
   setupMenu("allBtn", "allMenu", act => {
     const songs = search().res.map(r => r.s);
     if (act === "json") return download("songs-backup.json", backupJson(SONGS), "application/json");
@@ -1197,7 +1203,7 @@ function renderSong(song) {
             <button class="mi" data-act="proj">${ICON.screen}Проектор (слова на экран)</button>
             <button class="mi" data-act="toset">${ICON.list}Добавить в сет-лист</button>
             <button class="mi" data-act="edit">${ICON.edit}Редактировать</button>
-            ${CLOUD && ME ? `<button class="mi" data-act="hist">🕘 История изменений</button>` : ""}
+            ${CLOUD && ME ? `<button class="mi" data-act="ai">✨ Дополнить с помощью AI</button><button class="mi" data-act="hist">🕘 История изменений</button>` : ""}
             ${song.play_shift ? `<button class="mi" data-act="unpin">↺ Вернуть оригинальную тональность (${esc(song.key)})</button>` : ""}
             <hr>
             <button class="mi" data-act="print">${ICON.print}Печать / сохранить PDF</button>
@@ -1282,6 +1288,7 @@ function renderSong(song) {
     if (act === "cho") download(safeName(song.title) + ".cho", songToChordPro(song, shift));
     if (act === "edit") go("edit-" + song.id);
     if (act === "hist") historyDialog(song);
+    if (act === "ai") aiEnrichDialog(song);
     if (act === "unpin") { if (!needEdit()) return; song.play_shift = 0; saveSong(song); delete state.shift[song.id]; toast("Вернули оригинальную тональность " + song.key); renderSong(songById(song.id)); }
     if (act === "toset") needEdit() && addToSetDialog(song, shift);
     if (act === "proj") openProjector([{ song }], 0);
@@ -1428,6 +1435,8 @@ function renderEditor(song) {
   const isNew = !song;
   const s = song ? { ...song, tags: [...song.tags], links: song.links.map(l => ({ ...l })), translit: [...song.translit] }
     : { id: newId("song"), title: "", title_alt: "", key: "", lang: "ru", lyrics: "", chord_chart: "", translit: [], tags: [], links: [], status: "proposed" };
+  const draft = state.draft; state.draft = null; // черновик от AI-агента
+  if (draft) Object.assign(s, JSON.parse(JSON.stringify(draft.song)));
   const trText = () => { const idx = lyricLineIdx(s.lyrics); return idx.map(i => s.translit[i] || "").join("\n"); };
   document.title = isNew ? "Новая песня" : "Правка: " + s.title;
   const tagOptions = [...new Set([...DEFAULT_TAGS, ...ALL_TAGS, ...s.tags])];
@@ -1439,6 +1448,7 @@ function renderEditor(song) {
       <span class="spacer"></span>
     </div></div>
     <main class="wrap"><form class="editor" id="ed" autocomplete="off">
+      ${draft ? `<div class="ai-banner">${esc(draft.banner)}${draft.changed.length ? `<div class="muted" style="font-size:13px;margin-top:4px">Изменено: ${esc(draft.changed.join(", "))}</div>` : ""}</div>` : ""}
       <div class="row2">
         <div class="field"><label for="f-title">Название *</label><input type="text" id="f-title" dir="auto" required value="${esc(s.title)}"></div>
         <div class="field"><label for="f-alt">Второе название</label><input type="text" id="f-alt" dir="auto" value="${esc(s.title_alt)}" placeholder="Например, первая строка или перевод"></div>
@@ -1653,6 +1663,7 @@ function renderTodo() {
         ${s.review.length ? `<div class="rv">${s.review.map(esc).join(" · ")}</div>` : ""}
         <div class="acts">
           <button class="btn" data-go="edit-${s.id}">${ICON.edit}Править</button>
+          ${CLOUD ? `<button class="btn" data-ai="${s.id}">✨ AI</button>` : ""}
           ${probs.some(p => p[0] === "nolink") ? `<button class="btn" data-link="${s.id}">${ICON.plus}Ссылка</button>` : ""}
           ${s.review.length ? `<button class="btn" data-ok="${s.id}">✓ Проверено</button>` : ""}
         </div>
@@ -1660,6 +1671,7 @@ function renderTodo() {
     </div></main>`;
   bindHeader();
   document.querySelectorAll("[data-f]").forEach(b => b.onclick = () => { state.todoFilter = b.dataset.f; renderTodo(); });
+  document.querySelectorAll("[data-ai]").forEach(b => b.onclick = () => aiEnrichDialog(songById(b.dataset.ai)));
   document.querySelectorAll("[data-link]").forEach(b => b.onclick = () => { const s = songById(b.dataset.link); linksDialog(s, () => renderTodo()); });
   document.querySelectorAll("[data-ok]").forEach(b => b.onclick = () => { const s = songById(b.dataset.ok); s.review = []; saveSong(s); toast("Отмечено как проверенное"); renderTodo(); });
   document.getElementById("copyTodo").onclick = async () => {
