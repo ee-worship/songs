@@ -271,13 +271,13 @@ async function teamDialog() {
   const myId = db ? (await db.auth.getSession()).data.session?.user?.id : null;
   const deleted = (state.admin ? cloud.songs || [] : []).filter(s => s.deleted_at).sort((a, b) => (b.deleted_at || "").localeCompare(a.deleted_at || ""));
   modal(`<h3>Команда</h3>
-    <div class="field"><label>Ваше имя</label><div style="display:flex;gap:8px"><input id="myName" maxlength="60" value="${esc(ME.name)}"><button class="btn" id="saveName">Сохранить</button></div>
-      <div class="muted" style="font-size:12px;margin-top:4px">${ME.role === "admin" ? "Вы админ" : "Вы в команде: можно добавлять и править песни и сет-листы"}</div></div>
-    ${state.admin ? `<div class="field"><label>Новые участники</label><div id="pendingBox" class="muted">Загружаю…</div></div>
-      <div class="field"><label>Ссылка-приглашение</label><div id="invites" class="muted">Загружаю…</div></div>
-      <div class="field"><label>Участники</label><div id="members" class="muted">Загружаю…</div></div>
-      <div class="field"><button class="btn" id="todoBtn">📝 Что доделать в песнях</button></div>` : ""}
-    ${deleted.length ? `<div class="field"><label>Удалённые песни</label>${deleted.map(s => `<div class="team-row"><span dir="auto">${esc(s.title)}</span><span class="muted">${fmtWhen(s.deleted_at || s.updated_at)}${s.updated_by_name ? " · " + esc(s.updated_by_name) : ""}</span><button class="btn" data-restore="${esc(s.id)}">Вернуть</button></div>`).join("")}</div>` : ""}
+    <div class="field"><label for="myName">Ваше имя</label><div class="inline-form"><input id="myName" maxlength="60" value="${esc(ME.name)}"><button class="btn" id="saveName">Сохранить</button></div>
+      <div class="hint muted" style="font-size:13px;margin-top:4px">${ME.role === "admin" ? "Вы админ" : "Вы в команде: можно добавлять и править песни и сет-листы"}</div></div>
+    ${state.admin ? `<div class="sect"><div class="sect-h">Новые участники</div><div id="pendingBox" class="muted">Загружаю…</div></div>
+      <div class="sect"><div class="sect-h">Ссылка-приглашение</div><div id="invites" class="muted">Загружаю…</div></div>
+      <div class="sect"><div class="sect-h">Участники</div><div id="members" class="muted">Загружаю…</div></div>
+      <div class="sect"><button class="btn" id="todoBtn">📝 Что доделать в песнях</button></div>` : ""}
+    ${deleted.length ? `<div class="sect"><div class="sect-h">Удалённые песни</div>${deleted.map(s => `<div class="team-row"><span dir="auto">${esc(s.title)}</span><span class="muted">${fmtWhen(s.deleted_at || s.updated_at)}${s.updated_by_name ? " · " + esc(s.updated_by_name) : ""}</span><button class="btn" data-restore="${esc(s.id)}">Вернуть</button></div>`).join("")}</div>` : ""}
     <div class="actions"><button class="btn" id="logout">Выйти на этом устройстве</button><button class="btn primary" data-x>Готово</button></div>`, (m, close) => {
     m.querySelector("[data-x]").onclick = close;
     m.querySelector("#saveName").onclick = async () => {
@@ -305,7 +305,7 @@ async function teamDialog() {
       const pb = m.querySelector("#pendingBox");
       if (pb && ed) {
         pb.innerHTML = `<label class="chk"><input type="checkbox" id="reqAppr" ${ed.require_approval ? "checked" : ""}> Одобрять новых вручную</label>
-          <div class="muted" style="font-size:12px">${ed.require_approval ? "Кто откроет ссылку, сначала попадёт сюда — и получит доступ, когда вы нажмёте «Принять»." : "Сейчас любой со ссылкой сразу получает доступ."}</div>
+          <div class="hint">${ed.require_approval ? "Кто откроет ссылку, сначала попадёт сюда — и получит доступ, когда вы нажмёте «Принять»." : "Сейчас любой со ссылкой сразу получает доступ."}</div>
           <div id="pendingList"></div>`;
         pb.querySelector("#reqAppr").onchange = async e => {
           const { error } = await db.rpc("set_require_approval", { p_on: e.target.checked });
@@ -330,8 +330,8 @@ async function teamDialog() {
       const { data, error } = await db.from("members").select("*").eq("role", "pending").order("joined_at");
       if (error) return box.textContent = "Не удалось загрузить: " + error.message;
       cloud.pending = data.length;
-      box.innerHTML = data.length ? data.map(u => `<div class="team-row"><span><b>${esc(u.name)}</b> ждёт одобрения</span><span class="muted">${fmtWhen(u.joined_at)}</span>
-        <button class="btn primary" data-appr="${u.user_id}">Принять</button><button class="btn" data-rej="${u.user_id}">Отклонить</button></div>`).join("")
+      box.innerHTML = data.length ? data.map(u => `<div class="member-row"><div class="who"><b>${esc(u.name)}</b> ждёт одобрения<span class="muted">${fmtWhen(u.joined_at)}</span></div>
+        <button class="btn primary" data-appr="${u.user_id}">Принять</button><button class="mini-btn" data-rej="${u.user_id}" title="Отклонить">✕</button></div>`).join("")
         : `<div class="muted" style="font-size:13px;margin-top:6px">Заявок нет.</div>`;
       box.querySelectorAll("[data-appr]").forEach(b => b.onclick = async () => {
         const { error } = await db.from("members").update({ role: "editor" }).eq("user_id", b.dataset.appr);
@@ -349,9 +349,8 @@ async function teamDialog() {
       const data = (all || []).filter(u => u.role !== "pending");
       const box = m.querySelector("#members"); if (!box) return;
       if (error) return box.textContent = "Не удалось загрузить: " + error.message;
-      box.innerHTML = data.map(u => `<div class="team-row"><span>${esc(u.name)}${u.role === "admin" ? ' <span class="pill">админ</span>' : ""}</span>
-        <span class="muted">был(а) ${fmtWhen(u.last_seen)}</span>
-        ${u.user_id === myId ? '<span class="muted">это вы</span>' : `<select data-role="${u.user_id}" class="chip"><option value="editor" ${u.role === "editor" ? "selected" : ""}>редактор</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>админ</option></select><button class="btn" data-del="${u.user_id}" title="Убрать из команды">✕</button>`}</div>`).join("") || "Пока никого";
+      box.innerHTML = data.map(u => `<div class="member-row"><div class="who"><b>${esc(u.name)}</b>${u.user_id === myId ? ' <span class="pill grey">это вы</span>' : ""}<span class="muted">был(а) ${fmtWhen(u.last_seen)}</span></div>
+        ${u.user_id === myId ? `<span class="pill">${u.role === "admin" ? "админ" : "в команде"}</span><span></span>` : `<select data-role="${u.user_id}" class="mini-sel" title="Роль"><option value="editor" ${u.role === "editor" ? "selected" : ""}>в команде</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>админ</option></select><button class="mini-btn" data-del="${u.user_id}" title="Убрать из команды">✕</button>`}</div>`).join("") || "Пока никого";
       box.querySelectorAll("[data-role]").forEach(s => s.onchange = async () => {
         const { error } = await db.from("members").update({ role: s.value }).eq("user_id", s.dataset.role);
         toast(error ? "Не получилось: " + error.message : "Роль изменена");
