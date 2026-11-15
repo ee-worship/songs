@@ -29,3 +29,10 @@ jobs:
           if [ -n "$KEY" ]; then supabase secrets set --project-ref "$PROJECT" --yes ANTHROPIC_API_KEY="$KEY"; else echo "::warning::Нет секрета ANTHROPIC_API_KEY"; fi
       - name: Установить агента
         run: supabase functions deploy agent --project-ref "$PROJECT" --no-verify-jwt --yes
+      - name: Проверить, что агент отвечает
+        run: |
+          sleep 5
+          OUT=$(curl -s -X POST "https://$PROJECT.supabase.co/functions/v1/agent" \
+            -H "apikey: sb_publishable_EEKb-9OVpdp9KGo4d8sJzg_LVEuZXXq" -H "Content-Type: application/json" -d '{"action":"usage"}')
+          echo "Ответ без входа: $OUT"
+          echo "$OUT" | grep -q "только участникам" || { echo "::error::Агент отвечает не так, как ожидалось"; exit 1; }
