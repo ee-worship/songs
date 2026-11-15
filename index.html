@@ -100,6 +100,17 @@
   .todo-item .acts { display: flex; gap: 6px; flex-wrap: wrap; }
   .todo-item .acts .btn { min-height: 30px; padding: 3px 9px; font-size: 13px; }
   .admin-link { text-align: center; margin: 0 0 30px; }
+  .lyrics.cols2 .structure { column-span: all; }
+  @media (min-width: 760px) {
+    .lyrics.cols2 { column-count: 2; column-gap: 48px; column-rule: 1px solid var(--line); }
+    .lyrics.cols2 .blk { break-inside: avoid; }
+  }
+  .team-top { position: relative; }
+  .struct-ed .structure { margin-bottom: 8px; }
+  .st-chip.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .struct-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; font-size: 14px; }
+  .struct-tools .btn { padding: 5px 10px; font-size: 13px; }
+  .team-top .badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .structure { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 0 14px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: 12px; font-size: 13px; }
   .structure .arr { color: var(--muted); }
   .st-chip { border: 1px solid var(--line); background: var(--surface-2); color: var(--sec); border-radius: 999px; padding: 2px 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
@@ -414,7 +425,9 @@ const state = {
   fontSize: store.get("fs", 19),
   stageFs: store.get("stageFs", 26),
   trMode: store.get("trMode", "both"),
-  foldRepeats: store.get("foldRepeats", true), // повторяющиеся части показывать один раз
+  foldRepeats: store.get("foldRepeats", true),
+  cols: store.get("cols", 1), // 1 или 2 колонки текста на широком экране
+  exportHe: store.get("exportHe", ""), // повторяющиеся части показывать один раз
   projTr: store.get("projTr", false),
   printCompact: store.get("printCompact", false),
   howtoOpen: false,
@@ -1389,7 +1402,7 @@ function structureHtml(sec) {
     const last = items[items.length - 1];
     if (last && last.r === r) last.n++; else items.push({ r, label, rep: x.rep >= 0, n: 1 });
   });
-  return `<div class="structure" dir="auto">${items.map((it, i) => `${i ? '<span class="arr">→</span>' : ""}<button class="st-chip${it.rep ? " rep" : ""}" data-sec="${it.r}" dir="auto">${esc(it.label)}${it.n > 1 ? ` ×${it.n}` : ""}</button>`).join("")}</div>`;
+  return `<div class="structure" dir="ltr">${items.map((it, i) => `${i ? '<span class="arr">→</span>' : ""}<button class="st-chip${it.rep ? " rep" : ""}" data-sec="${it.r}" dir="auto">${esc(it.label)}${it.n > 1 ? ` ×${it.n}` : ""}</button>`).join("")}</div>`;
 }
 // одна строка текста с учётом режима транскрипции
 function lyricLineHtml(song, line, i, shift, ki, useTr) {
@@ -1412,6 +1425,7 @@ function renderLyricsFolded(song, shift, mode, sec = songSections(song)) {
 }
 // выбор: свернуть повторы (если они есть и включено) или показать как есть
 function lyricsHtml(song, shift, mode, blocks = false) {
+  if (state.cols === 2) blocks = true; // в двух колонках блоки не должны рваться
   if (state.foldRepeats) { const sec = songSections(song); if (sec.hasRepeats) return renderLyricsFolded(song, shift, mode, sec); }
   return blocks ? renderLyricsBlocks(song, shift, mode) : renderLyrics(song, shift, mode);
 }
@@ -1467,7 +1481,33 @@ function songToText(song, { chords = true, shift = 0, mode = "he" } = {}) {
   });
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
 }
-function songToChordPro(song, shift = 0) {
+// песни на иврите: «he» — только иврит, «both» — иврит и транскрипция, «tr» — только транскрипция
+const HE_MODES = [["he", "Только иврит"], ["both", "Иврит + транскрипция"], ["tr", "Только транскрипция (русскими буквами)"]];
+function heModeHtml(name, cur) {
+  return `<div class="field" style="margin-top:12px"><label>Песни на иврите</label>${HE_MODES.map(([v, t]) =>
+    `<label class="chk" style="margin:5px 0"><input type="radio" name="${name}" value="${v}" ${cur === v ? "checked" : ""}> ${t}</label>`).join("")}</div>`;
+}
+function exportDialog(songs, fmt, baseName, shifts) {
+  const hasHe = songs.some(hasTranslit);
+  modal(`<h3>Скачать ${fmt === "txt" ? "текстом (.txt)" : "ChordPro (.cho)"}</h3>
+    <div class="muted" style="font-size:14px">Песен: ${songs.length}</div>
+    ${fmt === "txt" ? `<label class="chk" style="margin-top:10px"><input type="checkbox" id="exChords" ${state.showChords ? "checked" : ""}> С аккордами</label>` : ""}
+    ${hasHe ? heModeHtml("exHe", state.exportHe || state.trMode) : ""}
+    <div class="actions"><button class="btn" data-x>Отмена</button><button class="btn primary" data-ok>${ICON.down}Скачать</button></div>`, (m, close) => {
+    m.querySelector("[data-x]").onclick = close;
+    m.querySelector("[data-ok]").onclick = () => {
+      const mode = m.querySelector("input[name=exHe]:checked")?.value || "he";
+      if (hasHe) { state.exportHe = mode; store.set("exportHe", mode); }
+      const sh = (s, i) => shifts ? shifts[i] : curShift(s);
+      if (fmt === "txt") {
+        const chords = m.querySelector("#exChords").checked;
+        download(baseName + ".txt", songs.map((s, i) => songToText(s, { chords, shift: sh(s, i), mode })).join("\n\n────────────────────\n\n"));
+      } else download(baseName + ".cho", songs.map((s, i) => songToChordPro(s, sh(s, i), mode)).join("\n{new_song}\n"));
+      close();
+    };
+  });
+}
+function songToChordPro(song, shift = 0, mode = "he") {
   const ki = keyInfo(song, shift);
   const out = [`{title: ${song.title}}`];
   if (song.title_alt) out.push(`{subtitle: ${song.title_alt}}`);
@@ -1476,9 +1516,13 @@ function songToChordPro(song, shift = 0) {
   if (song.tags.length) out.push(`{meta: tags ${song.tags.join(", ")}}`);
   if (song.chord_chart) song.chord_chart.split("\n").forEach(l => out.push(`{comment: ${l}}`));
   out.push("");
-  song.lyrics.split("\n").forEach(line => {
-    if (SECTION_RE.test(line.trim())) out.push(`{comment: ${line.trim().replace(/:$/, "")}}`);
-    else out.push(line.replace(/\[([^\]]+)\]/g, (_, c) => "[" + trChord(c, shift, ki) + "]"));
+  const useTr = hasTranslit(song) ? mode : "he";
+  song.lyrics.split("\n").forEach((line, i) => {
+    if (SECTION_RE.test(line.trim())) { out.push(`{comment: ${line.trim().replace(/:$/, "")}}`); return; }
+    const tr = song.translit[i];
+    const l = tr && useTr === "tr" ? translitWithChords(line, tr) : line;
+    out.push(l.replace(/\[([^\]]+)\]/g, (_, c) => "[" + trChord(c, shift, ki) + "]"));
+    if (tr && useTr === "both") out.push(tr);
   });
   return out.join("\n") + "\n";
 }
@@ -1549,6 +1593,7 @@ function printDialog(items, opts = {}) {
     </div>
     <label style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:14px"><input type="checkbox" id="pChords" ${state.showChords ? "checked" : ""}> С аккордами</label>
     <label style="display:flex;gap:8px;align-items:center;margin-top:6px;font-size:14px"><input type="checkbox" id="pFold" ${state.foldRepeats ? "checked" : ""}> Повторяющиеся части — один раз (строение песни сверху)</label>
+    ${items.some(x => hasTranslit(x.song)) ? heModeHtml("pHe", state.trMode) : ""}
     <div class="muted" style="font-size:13px;margin-top:8px">В окне печати выберите принтер или «Сохранить как PDF».</div>
     <div class="actions"><button class="btn" data-x>Отмена</button><button class="btn primary" data-ok>${ICON.print}Печать</button></div>`, (m, close) => {
     m.querySelector("[data-x]").onclick = close;
@@ -1556,8 +1601,10 @@ function printDialog(items, opts = {}) {
       state.printCompact = m.querySelector("input[name=pm]:checked").value === "compact"; store.set("printCompact", state.printCompact);
       const prevChords = state.showChords; state.showChords = m.querySelector("#pChords").checked;
       state.foldRepeats = m.querySelector("#pFold").checked; store.set("foldRepeats", state.foldRepeats);
+      const prevTr = state.trMode, he = m.querySelector("input[name=pHe]:checked");
+      if (he) state.trMode = he.value;
       close(); printItems(items, { ...opts, compact: state.printCompact });
-      state.showChords = prevChords;
+      state.showChords = prevChords; state.trMode = prevTr;
     };
   });
 }
@@ -1565,6 +1612,7 @@ function printDialog(items, opts = {}) {
 /* ======================= иконки ======================= */
 const I = p => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
 const ICON = {
+  team: I('<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>'),
   search: I('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
   back: I('<path d="m15 18-6-6 6-6"/>'),
   next: I('<path d="m9 18 6-6-6-6"/>'),
@@ -1620,6 +1668,7 @@ function renderList() {
   app.innerHTML = `
     <header class="top"><div class="wrap">
       ${topHeader("songs", `
+        ${CLOUD && ME ? `<button class="icon-btn team-top" id="teamTop" title="Команда${state.admin ? " и приглашения" : ""}">${ICON.team}${state.admin && cloud.pending ? `<span class="badge">${cloud.pending}</span>` : ""}</button>` : ""}
         <div class="menu-wrap">
           <button class="btn" id="addBtn" title="Добавить песню">${ICON.plus}<span class="hide-sm">Песня</span></button>
           <div class="menu" id="addMenu">
@@ -1682,6 +1731,7 @@ function renderList() {
   const keySel = document.getElementById("keySel");
   keySel.onchange = () => { state.key = keySel.value; keySel.classList.toggle("on", !!state.key); fillList(); };
   document.getElementById("adminBtn").onclick = adminDialog;
+  document.getElementById("teamTop")?.addEventListener("click", adminDialog);
   setupMenu("addBtn", "addMenu", act => { if (!needEdit()) return; if (act === "new") go("new"); if (act === "pdf") importPdfDialog(); if (act === "ai") aiImportDialog(); });
   setupMenu("allBtn", "allMenu", act => {
     const songs = search().res.map(r => r.s);
@@ -1690,8 +1740,7 @@ function renderList() {
     if (!songs.length) return toast("Список пуст");
     const items = songs.map(s => ({ song: s, shift: curShift(s) }));
     if (act === "pdf") printDialog(items, { toc: songs.length > 1, title: state.status === "all" ? "Песни прославления" : ST_LABEL[state.status] });
-    if (act === "txt") download("Песни.txt", songs.map(s => songToText(s, { chords: state.showChords, shift: curShift(s), mode: state.trMode })).join("\n\n────────────────────\n\n"));
-    if (act === "cho") download("Песни.cho", songs.map(s => songToChordPro(s, curShift(s))).join("\n{new_song}\n"));
+    if (act === "txt" || act === "cho") exportDialog(songs, act, "Песни");
   });
   fillList();
   if (CLOUD) updateSyncNote();
@@ -1884,6 +1933,9 @@ function renderSong(song) {
         ${song.key && shift !== song.play_shift ? `<button class="btn" id="pinKey" title="Песня будет по умолчанию открываться в этой тональности">📌 Закрепить ${esc(ki.name)}</button>` : ""}
         ${listenButtons(song)}
         <button class="icon-btn" id="editLinks" title="${song.links.length ? "Изменить ссылку на запись" : "Добавить ссылку на запись"}">${song.links.length ? ICON.edit : ICON.plus}</button>
+        <div class="seg-ctl hide-sm" title="Колонки текста">
+          <button data-cols="1" class="${state.cols === 1 ? "on" : ""}">1 колонка</button><button data-cols="2" class="${state.cols === 2 ? "on" : ""}">2</button>
+        </div>
         ${songSections(song).hasRepeats ? `<div class="seg-ctl" title="Повторяющиеся части">
           <button data-fold="1" class="${state.foldRepeats ? "on" : ""}">Компактно</button><button data-fold="0" class="${state.foldRepeats ? "" : "on"}">Полностью</button>
         </div>` : ""}
@@ -1895,7 +1947,7 @@ function renderSong(song) {
       ${hasChords ? `<details class="howto" id="howto" ${state.howtoOpen ? "open" : ""}><summary>🎸🎹 Как играть${capo ? ` · <b>капо ${capo}</b>` : ""}${song.notes ? " · есть заметки команды" : ""}</summary><div id="howtoBody"></div></details>` : ""}
       ${capo && state.showChords ? `<div class="capo-bar">Капо ${capo} — аккорды показаны формами <b>${esc(kiShape.name || "")}</b>, звучит <b>${esc(ki.name || "")}</b> <button class="btn" id="capoOff">Показать без капо</button></div>` : ""}
       ${song.chord_chart ? `<div class="chart"><div class="h">Схема аккордов</div><div class="cl">${renderChart(song, dshift)}</div></div>` : ""}
-      <div class="lyrics" style="--fs:${state.fontSize}px">${lyricsHtml(song, dshift, state.trMode)}</div>
+      <div class="lyrics ${state.cols === 2 ? "cols2" : ""}" dir="${state.cols === 2 ? song.dir : "auto"}" style="--fs:${state.fontSize}px">${lyricsHtml(song, dshift, state.trMode)}</div>
       ${hasChords ? relatedHtml(song, ki) : '<div style="height:40px"></div>'}
     </main>`;
 
@@ -1926,6 +1978,7 @@ function renderSong(song) {
     renderSong(songById(song.id));
   };
   document.querySelectorAll("[data-tr]").forEach(b => b.onclick = () => { state.trMode = b.dataset.tr; store.set("trMode", state.trMode); rerender(); });
+  document.querySelectorAll("[data-cols]").forEach(b => b.onclick = () => { state.cols = +b.dataset.cols; store.set("cols", state.cols); rerender(); });
   document.querySelectorAll("[data-fold]").forEach(b => b.onclick = () => { state.foldRepeats = b.dataset.fold === "1"; store.set("foldRepeats", state.foldRepeats); rerender(); });
   bindStructure(app);
   document.querySelectorAll("[data-fs]").forEach(b => b.onclick = e => {
@@ -2142,6 +2195,12 @@ function renderEditor(song) {
           <button type="button" class="btn" id="prevBtn">Предпросмотр</button>
         </div>
       </div>
+      <div class="field struct-ed" id="structField" hidden>
+        <label>Строение песни <span class="muted">— порядок частей</span></label>
+        <div id="structChips" class="structure"></div>
+        <div id="structTools" class="struct-tools"></div>
+        <div class="help">Нажмите на часть, чтобы передвинуть, повторить или убрать её. Текст выше перестроится сам: каждая часть записана один раз, а повтор — короткой подписью (например <code>Припев:</code>). Транскрипция переносится вместе со строками.</div>
+      </div>
       <div class="preview" id="preview" hidden></div>
       <div class="field"><label for="f-chart">Схема аккордов <span class="muted">(если аккорды не над словами)</span></label>
         <textarea class="short" id="f-chart" dir="ltr" spellcheck="false" placeholder="Куплет: C G Am F&#10;Припев: F G C">${esc(s.chord_chart)}</textarea>
@@ -2172,6 +2231,62 @@ function renderEditor(song) {
   };
   trHelp();
   $("f-tr").oninput = trHelp;
+
+  // ---------- строение песни ----------
+  let stSel = -1; // выбранная позиция в строении
+  const trFull = () => { // транскрипция, разложенная по строкам текста
+    const lines = lyr.value.split("\n"), out = lines.map(() => "");
+    const trl = $("f-tr") ? $("f-tr").value.split("\n") : [];
+    lyricLineIdx(lyr.value).forEach((li, k) => out[li] = trl[k] || "");
+    return out;
+  };
+  const curSec = () => songSections({ lyrics: lyr.value, translit: trFull() });
+  // собрать текст заново по последовательности частей seq (номера «оригиналов»)
+  const rebuild = (sec, seq) => {
+    const tr = trFull(), outL = [], outT = [], seen = new Set();
+    const typeCount = {}; sec.secs.forEach(x => { if (x.rep < 0 && x.idx.length) typeCount[x.type] = (typeCount[x.type] || 0) + 1; });
+    seq.forEach(r => {
+      const x = sec.secs[r];
+      if (outL.length) { outL.push(""); outT.push(""); }
+      const label = x.li >= 0 ? sec.lines[x.li] : "";
+      // повтор можно записать пустой подписью, только если подпись есть и она однозначна
+      const short = seen.has(r) && label && typeCount[x.type] === 1;
+      if (label) { outL.push(label); outT.push(""); }
+      if (!short) x.idx.forEach(i => { outL.push(sec.lines[i]); outT.push(tr[i] || ""); });
+      seen.add(r);
+    });
+    lyr.value = outL.join("\n");
+    if ($("f-tr") && $("f-tr").value.trim()) $("f-tr").value = lyricLineIdx(lyr.value).map(i => outT[i] || "").join("\n");
+    lyr.dispatchEvent(new Event("input"));
+  };
+  const drawStruct = () => {
+    if (!$("structField")) return; // редактор уже закрыт
+    const sec = curSec(), seq = sec.secs.map((x, k) => x.rep >= 0 ? x.rep : k);
+    const uniq = sec.secs.map((x, k) => [x, k]).filter(([x]) => x.rep < 0 && (x.idx.length || x.label));
+    $("structField").hidden = sec.secs.length < 2;
+    if (stSel >= seq.length) stSel = -1;
+    const name = r => sec.secs[r].label || "Без подписи";
+    $("structChips").innerHTML = seq.map((r, i) => `${i ? '<span class="arr">→</span>' : ""}<button type="button" class="st-chip${sec.secs[i].rep >= 0 ? " rep" : ""}${i === stSel ? " sel" : ""}" data-i="${i}" dir="auto">${esc(name(r))}</button>`).join("");
+    $("structTools").innerHTML = (stSel >= 0 ? `<span class="muted" dir="auto">«${esc(name(seq[stSel]))}»:</span>
+        <button type="button" class="btn" data-st="left" ${stSel === 0 ? "disabled" : ""}>← Раньше</button>
+        <button type="button" class="btn" data-st="right" ${stSel === seq.length - 1 ? "disabled" : ""}>Позже →</button>
+        <button type="button" class="btn" data-st="dup">Повторить ещё раз</button>
+        <button type="button" class="btn danger" data-st="del" ${seq.filter(r => r === seq[stSel]).length < 2 ? 'title="Это единственное место этой части — текст части тоже удалится"' : ""}>Убрать</button>` : "")
+      + `<select class="mini-sel" id="stAdd"><option value="">+ Добавить часть в конец…</option>${uniq.map(([x, k]) => `<option value="${k}">${esc(name(k))}</option>`).join("")}</select>`
+      + (sec.hasRepeats && sec.secs.some(x => x.rep >= 0 && x.idx.length) ? `<button type="button" class="btn" data-st="squash">Сжать повторы в тексте</button>` : "");
+    $("structChips").querySelectorAll(".st-chip").forEach(b => b.onclick = () => { stSel = +b.dataset.i === stSel ? -1 : +b.dataset.i; drawStruct(); });
+    $("structTools").querySelectorAll("[data-st]").forEach(b => b.onclick = () => {
+      const a = b.dataset.st, q = seq.slice();
+      if (a === "left") { [q[stSel - 1], q[stSel]] = [q[stSel], q[stSel - 1]]; stSel--; }
+      if (a === "right") { [q[stSel + 1], q[stSel]] = [q[stSel], q[stSel + 1]]; stSel++; }
+      if (a === "dup") { q.splice(stSel + 1, 0, q[stSel]); stSel++; }
+      if (a === "del") { q.splice(stSel, 1); stSel = -1; }
+      rebuild(sec, q); drawStruct();
+    });
+    $("stAdd").onchange = e => { if (e.target.value === "") return; const q = seq.concat(+e.target.value); stSel = q.length - 1; rebuild(sec, q); drawStruct(); };
+  };
+  drawStruct();
+  let stTimer; lyr.addEventListener("input", () => { clearTimeout(stTimer); stTimer = setTimeout(drawStruct, 400); });
   lyr.addEventListener("input", () => {
     trHelp();
     if (!s.lyrics && !$("f-title").value && lyr.value.trim()) {
@@ -2450,7 +2565,7 @@ function renderSet(set) {
     const cur = getSet(set.id);
     const its = cur.items.map(it => ({ song: songById(it.songId), shift: it.shift || 0 })).filter(x => x.song);
     if (act === "print") { if (!its.length) return toast("Сет-лист пуст"); printDialog(its, { toc: true, title: cur.name + (cur.date ? " — " + fmtDate(cur.date) : "") }); }
-    if (act === "txt") download(safeName(cur.name) + ".txt", its.map(x => songToText(x.song, { chords: state.showChords, shift: x.shift, mode: state.trMode })).join("\n\n────────────────────\n\n"));
+    if (act === "txt") exportDialog(its.map(x => x.song), "txt", safeName(cur.name), its.map(x => x.shift));
     if (act === "copy") {
       const text = [cur.name + (cur.date ? " (" + fmtDate(cur.date) + ")" : ""), ...its.map((x, i) => `${i + 1}. ${x.song.title}${x.song.key ? " — " + keyNameShift(x.song, x.shift) : ""}`)].join("\n");
       try { await navigator.clipboard.writeText(text); toast("Список скопирован — можно вставить в WhatsApp/Telegram"); } catch { toast("Не удалось скопировать"); }
@@ -3293,7 +3408,7 @@ function openStage(song) {
   const draw = () => {
     const shift = curShift(song), ki = keyInfo(song, shift), capo = curCapo(song);
     stage.classList.toggle("no-chords", !state.showChords);
-    stage.innerHTML = `<div class="lyrics" style="--fs:${state.stageFs}px">
+    stage.innerHTML = `<div class="lyrics ${state.cols === 2 ? "cols2" : ""}" dir="${state.cols === 2 ? song.dir : "auto"}" style="--fs:${state.stageFs}px">
       <div class="stage-title" dir="${song.dir}">${esc(song.title)}${ki.name && state.showChords ? ` · ${esc(ki.name)}` : ""}${capo && state.showChords ? ` · капо ${capo}` : ""}</div>
       ${song.chord_chart ? `<div class="chart"><div class="cl">${renderChart(song, shift - capo)}</div></div>` : ""}
       ${lyricsHtml(song, shift - capo, state.trMode)}</div>`;
