@@ -387,7 +387,13 @@
     .p-song { break-after: page; }
     .p-song:last-child { break-after: auto; }
     .p-toc h1 { font-size: 20pt; margin: 0 0 10pt; }
-    .p-toc ol { columns: 2; font-size: 11pt; line-height: 1.6; }
+    .p-toc h3 { font-size: 13pt; margin: 0 0 8pt; color: #555; }
+    .p-toc .toc-list { columns: 2; column-gap: 12mm; font-size: 11pt; line-height: 1.55; }
+    .toc-row { display: flex; gap: 6pt; align-items: baseline; break-inside: avoid; }
+    .toc-row .n { min-width: 2.2em; text-align: end; color: #777; font-variant-numeric: tabular-nums; }
+    .toc-row .t { flex: 1; }
+    .toc-row .k { color: #a3241a; font-size: 9.5pt; }
+    .p-num { display: inline-block; min-width: 1.6em; margin-inline-end: 8pt; padding: 0 5pt; border: 1px solid #bbb; border-radius: 5pt; font-size: .7em; color: #666; text-align: center; vertical-align: middle; }
     .p-toc { break-after: page; }
   }
 </style>
@@ -983,10 +989,10 @@ function backupJson(songs) {
 }
 
 /* ======================= печать / PDF ======================= */
-function printSongHtml(song, shift, compact) {
+function printSongHtml(song, shift, compact, num) {
   const ki = keyInfo(song, shift), capo = curCapo(song), ks = keyInfo(song, shift - capo);
   return `<section class="p-song ${compact ? "compact" : ""} ${state.showChords ? "" : "no-chords"}">
-      <h2 dir="${song.dir}">${esc(song.title)}</h2>
+      <h2 dir="${song.dir}">${num ? `<span class="p-num" dir="ltr">${num}</span>` : ""}${esc(song.title)}</h2>
       ${song.title_alt ? `<div class="p-alt" dir="${song.dir}">${esc(song.title_alt)}</div>` : ""}
       <div class="p-meta">${[song.key && state.showChords ? "Тональность: " + ki.name : "", capo && state.showChords ? `Капо ${capo} (аккорды формами ${ks.name})` : "", song.tags.join(", ")].filter(Boolean).join(" · ")}</div>
       ${song.chord_chart && state.showChords ? `<div class="chart"><div class="h">Схема аккордов</div><div class="cl">${renderChart(song, shift - capo)}</div></div>` : ""}
@@ -1013,10 +1019,24 @@ function fitToPage(html) {
   return html.replace('class="p-song compact', `class="p-song compact${pick[0] === 2 ? " cols2" : ""}`)
     .replace('<div class="lyrics">', `<div class="lyrics" style="font-size:${pick[1]}pt">`);
 }
-function printItems(items, { toc = false, title = "Песни прославления", compact = false } = {}) {
+function printItems(items, { toc = false, title = "Песни прославления", compact = false, group = false } = {}) {
   const area = document.getElementById("printArea");
-  const blocks = items.map(({ song, shift }) => { const h = printSongHtml(song, shift, compact); return compact ? fitToPage(h) : h; }).join("");
-  const tocHtml = toc ? `<section class="p-toc"><h1>${esc(title)}</h1><ol>${items.map(({ song, shift }) => `<li dir="auto">${esc(song.title)}${song.key && state.showChords ? " — " + esc(keyInfo(song, shift).name) : ""}</li>`).join("")}</ol></section>` : "";
+  // сборник: сначала русские песни, потом на иврите — у каждой группы своё оглавление на отдельном листе
+  if (group) items = [...items.filter(x => x.song.lang !== "he"), ...items.filter(x => x.song.lang === "he")];
+  const blocks = items.map(({ song, shift }, i) => { const h = printSongHtml(song, shift, compact, toc ? i + 1 : 0); return compact ? fitToPage(h) : h; }).join("");
+  const row = ({ song, shift }, i) => `<div class="toc-row"><span class="n" dir="ltr">${i + 1}</span><span class="t" dir="auto">${esc(song.title)}</span>${song.key && state.showChords ? `<span class="k" dir="ltr">${esc(keyInfo(song, shift).name)}</span>` : ""}</div>`;
+  let tocHtml = "";
+  if (toc) {
+    const rows = items.map((x, i) => ({ x, i }));
+    const ru = rows.filter(r => r.x.song.lang !== "he"), he = rows.filter(r => r.x.song.lang === "he");
+    if (group && ru.length && he.length) {
+      tocHtml = `<section class="p-toc"><h1>${esc(title)}</h1><h3>Песни на русском</h3><div class="toc-list">${ru.map(r => row(r.x, r.i)).join("")}</div></section>
+        <section class="p-toc" dir="rtl"><h1 dir="rtl">שירים בעברית</h1><div class="toc-list">${he.map(r => row(r.x, r.i)).join("")}</div></section>`;
+    } else {
+      const rtl = he.length && !ru.length;
+      tocHtml = `<section class="p-toc" dir="${rtl ? "rtl" : "ltr"}"><h1 dir="auto">${esc(title)}</h1><div class="toc-list">${rows.map(r => row(r.x, r.i)).join("")}</div></section>`;
+    }
+  }
   area.innerHTML = tocHtml + blocks;
   document.body.classList.add("printing");
   const done = () => { document.body.classList.remove("printing"); area.innerHTML = ""; removeEventListener("afterprint", done); };
@@ -1180,7 +1200,7 @@ function renderList() {
     if (act === "import") return importBackup();
     if (!songs.length) return toast("Список пуст");
     const items = songs.map(s => ({ song: s, shift: curShift(s) }));
-    if (act === "pdf") printDialog(items, { toc: songs.length > 1, title: state.status === "all" ? "Песни прославления" : ST_LABEL[state.status] });
+    if (act === "pdf") printDialog(items, { toc: songs.length > 1, group: true, title: state.status === "all" ? "Песни прославления" : ST_LABEL[state.status] });
     if (act === "txt" || act === "cho") exportDialog(songs, act, "Песни");
   });
   fillList();
