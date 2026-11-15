@@ -248,6 +248,8 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("Authorization") || "";
   const me = await whoami(auth);
   if (!me || !["editor", "admin"].includes(me.role)) return json({ error: "Агент доступен только участникам команды" }, 403);
+  // пока агентом пользуются только админы (так дешевле и спокойнее); чтобы открыть всей команде — убрать эту проверку
+  if (me.role !== "admin") return json({ error: "AI-агент пока доступен только админу" }, 403);
   const uid = userIdFromJwt(auth.replace(/^Bearer\s+/i, ""));
   let body: any = {};
   try { body = await req.json(); } catch { return json({ error: "bad json" }, 400); }

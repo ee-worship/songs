@@ -1086,7 +1086,7 @@ function updateSyncNote() {
    Готовит песню по ссылке или названию и дополняет существующие:
    транскрипция, аккорды, ссылка на запись, тональность, разметка частей.
    Результат всегда открывается в редакторе — человек проверяет и сохраняет. */
-const AI_ON = () => !!CLOUD && isMember();
+const AI_ON = () => !!CLOUD && state.admin; // пока агент только для админов
 const YT_RE = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/;
 
 async function agentCall(body) {
@@ -1155,7 +1155,7 @@ function openDraft(songId, draft, out, what) {
 
 // «Новая песня по ссылке или названию»
 function aiImportDialog() {
-  if (!needEdit()) return;
+  if (!AI_ON()) return toast("AI-агент пока доступен только админу");
   modal(`<h3>✨ Песня по ссылке или названию</h3>
     <div class="muted" style="font-size:14px">Ссылка на holychords, YouTube или любой сайт с аккордами — или просто название песни. Агент найдёт слова и аккорды, для иврита сделает транскрипцию, а вы проверите и сохраните.</div>
     <div class="field" style="margin-top:12px"><input id="aiIn" placeholder="https://holychords.pro/617 или «Ты достоин хвалы»" autocomplete="off"></div>
@@ -1186,7 +1186,7 @@ function aiImportDialog() {
 
 // «Дополнить с помощью AI» для существующей песни
 function aiEnrichDialog(song) {
-  if (!needEdit()) return;
+  if (!AI_ON()) return toast("AI-агент пока доступен только админу");
   const hasYt = song.links.some(l => YT_RE.test(l.url));
   const hasSec = song.lyrics.split("\n").some(l => SECTION_RE.test(l.replace(CHORD_TAG, "").trim()));
   const opts = [
@@ -1543,7 +1543,7 @@ function renderList() {
           <div class="menu" id="addMenu">
             <button class="mi" data-act="new">${ICON.edit}Новая песня — текст, PDF или скриншот</button>
             <button class="mi" data-act="pdf">${ICON.up}Из PDF или скриншотов (можно несколько)</button>
-            ${CLOUD ? `<button class="mi" data-act="ai">✨ По ссылке или названию (AI)</button>` : ""}
+            ${CLOUD && state.admin ? `<button class="mi" data-act="ai">✨ По ссылке или названию (AI)</button>` : ""}
           </div>
         </div>
         <div class="menu-wrap">
@@ -1765,7 +1765,9 @@ function renderSong(song) {
             <button class="mi" data-act="proj">${ICON.screen}Проектор (слова на экран)</button>
             <button class="mi" data-act="toset">${ICON.list}Добавить в сет-лист</button>
             <button class="mi" data-act="edit">${ICON.edit}Редактировать</button>
-            ${CLOUD && ME ? `<button class="mi" data-act="ai">✨ Дополнить с помощью AI</button><button class="mi" data-act="hist">🕘 История изменений</button>` : ""}
+            ${CLOUD && state.admin ? `<button class="mi" data-act="ai">✨ Дополнить с помощью AI</button>` : ""}
+            ${CLOUD && ME ? `<button class="mi" data-act="hist">🕘 История изменений</button>` : ""}
+            ${CLOUD && state.admin ? `<button class="mi danger" data-act="del">${ICON.trash}Удалить песню</button>` : ""}
             ${song.play_shift ? `<button class="mi" data-act="unpin">↺ Вернуть оригинальную тональность (${esc(song.key)})</button>` : ""}
             <hr>
             <button class="mi" data-act="print">${ICON.print}Печать / сохранить PDF</button>
@@ -1851,6 +1853,9 @@ function renderSong(song) {
     if (act === "edit") go("edit-" + song.id);
     if (act === "hist") historyDialog(song);
     if (act === "ai") aiEnrichDialog(song);
+    if (act === "del") confirmDialog(`Удалить песню «${song.title}»? Вернуть можно в меню «Команда» → «Удалённые песни».`, "Удалить", () => {
+      deleteSong(song.id); go(""); toast("Песня удалена");
+    });
     if (act === "unpin") { if (!needEdit()) return; song.play_shift = 0; saveSong(song); delete state.shift[song.id]; toast("Вернули оригинальную тональность " + song.key); renderSong(songById(song.id)); }
     if (act === "toset") needEdit() && addToSetDialog(song, shift);
     if (act === "proj") openProjector([{ song }], 0);
@@ -2225,7 +2230,7 @@ function renderTodo() {
         ${s.review.length ? `<div class="rv">${s.review.map(esc).join(" · ")}</div>` : ""}
         <div class="acts">
           <button class="btn" data-go="edit-${s.id}">${ICON.edit}Править</button>
-          ${CLOUD ? `<button class="btn" data-ai="${s.id}">✨ AI</button>` : ""}
+          ${CLOUD && state.admin ? `<button class="btn" data-ai="${s.id}">✨ AI</button>` : ""}
           ${probs.some(p => p[0] === "nolink") ? `<button class="btn" data-link="${s.id}">${ICON.plus}Ссылка</button>` : ""}
           ${s.review.length ? `<button class="btn" data-ok="${s.id}">✓ Проверено</button>` : ""}
         </div>

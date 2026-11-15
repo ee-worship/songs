@@ -2,7 +2,7 @@
    Готовит песню по ссылке или названию и дополняет существующие:
    транскрипция, аккорды, ссылка на запись, тональность, разметка частей.
    Результат всегда открывается в редакторе — человек проверяет и сохраняет. */
-const AI_ON = () => !!CLOUD && isMember();
+const AI_ON = () => !!CLOUD && state.admin; // пока агент только для админов
 const YT_RE = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/;
 
 async function agentCall(body) {
@@ -71,7 +71,7 @@ function openDraft(songId, draft, out, what) {
 
 // «Новая песня по ссылке или названию»
 function aiImportDialog() {
-  if (!needEdit()) return;
+  if (!AI_ON()) return toast("AI-агент пока доступен только админу");
   modal(`<h3>✨ Песня по ссылке или названию</h3>
     <div class="muted" style="font-size:14px">Ссылка на holychords, YouTube или любой сайт с аккордами — или просто название песни. Агент найдёт слова и аккорды, для иврита сделает транскрипцию, а вы проверите и сохраните.</div>
     <div class="field" style="margin-top:12px"><input id="aiIn" placeholder="https://holychords.pro/617 или «Ты достоин хвалы»" autocomplete="off"></div>
@@ -102,7 +102,7 @@ function aiImportDialog() {
 
 // «Дополнить с помощью AI» для существующей песни
 function aiEnrichDialog(song) {
-  if (!needEdit()) return;
+  if (!AI_ON()) return toast("AI-агент пока доступен только админу");
   const hasYt = song.links.some(l => YT_RE.test(l.url));
   const hasSec = song.lyrics.split("\n").some(l => SECTION_RE.test(l.replace(CHORD_TAG, "").trim()));
   const opts = [
