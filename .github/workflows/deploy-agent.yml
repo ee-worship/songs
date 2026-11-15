@@ -26,6 +26,6 @@ jobs:
         env:
           KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -n "$KEY" ]; then supabase secrets set --project-ref "$PROJECT" ANTHROPIC_API_KEY="$KEY"; else echo "::warning::Нет секрета ANTHROPIC_API_KEY"; fi
+          if [ -n "$KEY" ]; then supabase secrets set --project-ref "$PROJECT" --yes ANTHROPIC_API_KEY="$KEY"; else echo "::warning::Нет секрета ANTHROPIC_API_KEY"; fi
       - name: Установить агента
-        run: supabase functions deploy agent --project-ref "$PROJECT" --no-verify-jwt
+        run: supabase functions deploy agent --project-ref "$PROJECT" --no-verify-jwt --yes
