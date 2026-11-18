@@ -61,7 +61,7 @@
 
   /* меню */
   .menu-wrap { position: relative; }
-  .menu { position: absolute; right: 0; top: calc(100% + 6px); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.12); min-width: 250px; padding: 6px; z-index: 20; display: none; }
+  .menu { max-width: calc(100vw - 16px); position: absolute; right: 0; top: calc(100% + 6px); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,.14), 0 2px 6px rgba(0,0,0,.12); min-width: 250px; padding: 6px; z-index: 20; display: none; }
   .menu.open { display: block; }
   .mi { display: flex; width: 100%; align-items: center; gap: 10px; border: 0; background: transparent; padding: 9px 10px; border-radius: 8px; font-size: 14px; text-align: start; text-decoration: none; }
   .mi:hover { background: var(--surface-2); }
@@ -3662,8 +3662,16 @@ function closeProjector() {
 let openMenu = null;
 function setupMenu(btnId, menuId, onAct) {
   const btn = document.getElementById(btnId), menu = document.getElementById(menuId);
-  btn.onclick = e => { e.stopPropagation(); const was = menu.classList.contains("open"); closeMenus(); if (!was) { menu.classList.add("open"); openMenu = menu; } };
+  btn.onclick = e => { e.stopPropagation(); const was = menu.classList.contains("open"); closeMenus(); if (!was) { menu.classList.add("open"); openMenu = menu; placeMenu(menu); } };
   menu.addEventListener("click", e => { const b = e.target.closest("[data-act]"); if (!b) return; closeMenus(); onAct(b.dataset.act); });
+}
+// меню открываем туда, где есть место: не за левый и не за правый край экрана
+function placeMenu(menu) {
+  menu.style.left = ""; menu.style.right = "";
+  const pad = 8, r = menu.getBoundingClientRect(), host = menu.offsetParent?.getBoundingClientRect();
+  if (!host) return;
+  if (r.left < pad) { menu.style.right = "auto"; menu.style.left = Math.max(pad - host.left, Math.min(0, innerWidth - pad - r.width - host.left)) + "px"; }
+  else if (r.right > innerWidth - pad) { menu.style.left = "auto"; menu.style.right = Math.max(0, host.right - (innerWidth - pad)) + "px"; }
 }
 function closeMenus() { document.querySelectorAll(".menu.open").forEach(m => m.classList.remove("open")); openMenu = null; }
 document.addEventListener("click", e => { if (openMenu && !openMenu.contains(e.target)) closeMenus(); });
