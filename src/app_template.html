@@ -1250,10 +1250,12 @@ function fillList() {
 
 function importBackup() {
   const inp = document.createElement("input");
-  inp.type = "file"; inp.accept = ".json,application/json";
+  inp.type = "file"; // без фильтра типов: иначе телефоны показывают только камеру и галерею
   inp.onchange = async () => {
+    const f = inp.files[0]; if (!f) return;
+    if (!/\.json$/i.test(f.name) && !/json|text|octet/.test(f.type || "octet")) return toast("Нужен файл .json (резервная копия песенника)");
     try {
-      const data = JSON.parse((await inp.files[0].text()).replace(/^﻿/, ""));
+      const data = JSON.parse((await f.text()).replace(/^﻿/, ""));
       const songs = Array.isArray(data) ? data : data.songs || [];
       if (CLOUD) {
         if (!needEdit()) return;
@@ -1659,7 +1661,7 @@ function renderEditor(song) {
         <textarea id="f-lyrics" dir="${s.lang === "he" ? "rtl" : "ltr"}" spellcheck="false" placeholder="Куплет:\n[Am]Слова [F]песни с [C]аккордами\n\nПрипев:\n…">${esc(s.lyrics)}</textarea>
         <div class="help">Скриншот песни можно просто вставить сюда (Ctrl+V). Аккорд пишется в квадратных скобках перед слогом: <code>[Am]Слова [F]песни</code>. Раздел — отдельной строкой с двоеточием: <code>Припев:</code>. Пустая строка — новый блок (и новый слайд на проекторе).</div>
         <div class="ed-tools">
-          <button type="button" class="btn" id="fromPdf">${ICON.up}Из PDF</button><button type="button" class="btn" id="fromImg">${ICON.up}Из скриншота / фото</button><input type="file" id="pdfOne" accept="application/pdf,.pdf" hidden><input type="file" id="imgOne" accept="image/*" hidden>
+          <button type="button" class="btn" id="fromPdf">${ICON.up}Из PDF</button><button type="button" class="btn" id="fromImg">${ICON.up}Из скриншота / фото</button><input type="file" id="pdfOne" hidden><input type="file" id="imgOne" accept="image/*" hidden>
           <button type="button" class="btn" id="conv">Аккорды над строками → [Am]</button>
           <button type="button" class="btn" id="prevBtn">Предпросмотр</button>
         </div>
@@ -1800,6 +1802,7 @@ function renderEditor(song) {
   $("pdfOne").onchange = async () => {
     const f = $("pdfOne").files[0]; if (!f) return; $("pdfOne").value = "";
     if (/^image\//.test(f.type)) return fromImage(f);
+    if (!(/\.pdf$/i.test(f.name) || f.type === "application/pdf")) return toast("Это не PDF — выберите файл .pdf");
     toast("Читаю PDF…");
     const [r] = await importPdfFiles([f]);
     if (!r || r.error) return toast(r ? r.error : "Не получилось");
@@ -2110,7 +2113,7 @@ function importPdfDialog() {
     <div style="display:flex;gap:8px;align-items:center;margin-top:10px;font-size:14px"><span class="muted">Язык на скриншотах:</span>
       <div class="seg-ctl" id="impLang"><button data-l="rus" class="on">Русский</button><button data-l="heb">עברית</button></div></div>
     <div class="drop" id="drop">
-      <input type="file" id="pdfIn" accept="application/pdf,.pdf" multiple hidden>
+      <input type="file" id="pdfIn" multiple hidden>
       <input type="file" id="imgIn" accept="image/*" multiple hidden>
       <div class="drop-btns"><button type="button" class="btn primary" id="pickPdf">${ICON.up}Выбрать PDF</button><button type="button" class="btn" id="pickImg">${ICON.up}Скриншоты / фото</button></div>
       <div class="drop-hint">или перетащите файлы сюда</div></div>
