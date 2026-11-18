@@ -27,7 +27,7 @@ const MODEL = env("AGENT_MODEL", "claude-sonnet-5-5");
 const PRICE_IN = 2, PRICE_OUT = 10, PRICE_SEARCH = 0.01;
 
 // как на сайте: строка-подпись части песни
-const SECTION_RE = /^(?:\d+[\s.]*)?(куплет|припев|пред-?припев|бридж|мост|вступление|проигрыш|концовка|кода|окончание|запев|тэг|intro|verse|chorus|pre-?chorus|bridge|outro|interlude|instrumental|tag|ending|בית|פזמון|גשר|פתיחה|סיום|מעבר|קודה)[^:]*:$/i;
+const SECTION_RE = /^(?:\d+[\s.]*)?(?:(?:пред|пре|pre|פרה|פרי|קדם)[\s\-–־]*)?(куплет|припев|бридж|мост|вступление|проигрыш|концовка|кода|окончание|запев|тэг|intro|verse|chorus|bridge|outro|interlude|instrumental|tag|ending|בית|פזמון|גשר|פתיחה|סיום|מעבר|קודה)[^:]*:$/i;
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 

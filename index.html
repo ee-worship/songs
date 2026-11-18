@@ -461,7 +461,7 @@ try { IN_FRAME = window.self !== window.top; } catch { IN_FRAME = true; }
 
 /* ======================= текст ======================= */
 const HEB_RE = /[֐-׿]/g, LTR_RE = /[A-Za-zЀ-ӿ]/g;
-const SECTION_RE = /^(?:\d+[\s.]*)?(куплет|припев|пред-?припев|бридж|мост|вступление|проигрыш|концовка|кода|окончание|запев|тэг|intro|verse|chorus|pre-?chorus|bridge|outro|interlude|instrumental|tag|ending|בית|פזמון|גשר|פתיחה|סיום|מעבר|קודה)[^:]*:$/i;
+const SECTION_RE = /^(?:\d+[\s.]*)?(?:(?:пред|пре|pre|פרה|פרי|קדם)[\s\-–־]*)?(куплет|припев|бридж|мост|вступление|проигрыш|концовка|кода|окончание|запев|тэг|intro|verse|chorus|bridge|outro|interlude|instrumental|tag|ending|בית|פזמון|גשר|פתיחה|סיום|מעבר|קודה)[^:]*:$/i;
 const CHORD_TAG = /\[[^\]]*\]/g;
 const FINALS = { "ך": "כ", "ם": "מ", "ן": "נ", "ף": "פ", "ץ": "צ" };
 function normChar(c) {
