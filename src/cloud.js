@@ -218,39 +218,63 @@ async function cloudInit() {
 }
 
 function cleanJoinUrl() { try { history.replaceState(null, "", location.pathname + location.hash); } catch {} }
+// номер телефона: к единому виду (как в базе) и для показа
+function normPhone(p) {
+  const d = String(p || "").replace(/\D/g, "");
+  if (d.startsWith("972")) return d;
+  if (d.startsWith("0") && d.length >= 9 && d.length <= 10) return "972" + d.slice(1);
+  return d;
+}
+function fmtPhone(ph) {
+  const d = String(ph || "");
+  if (d.startsWith("972") && d.length === 12) return "0" + d.slice(3, 5) + "-" + d.slice(5, 8) + "-" + d.slice(8);
+  if (d.startsWith("972")) return "0" + d.slice(3);
+  return d ? "+" + d : "";
+}
+
+// вход по ссылке: номер телефона (из списка — сразу, иначе — заявка)
 function joinDialog(code) {
-  if (ME && ME.role === "admin") { cleanJoinUrl(); return toast("Вы уже в команде как админ"); }
-  modal(`<h3>Приглашение в команду</h3>
-    <div class="muted" style="font-size:14px">Вы сможете добавлять и править песни и сет-листы с этого устройства. Ваше имя будет видно в истории изменений.</div>
-    <div class="field" style="margin-top:12px"><label>Как вас зовут?</label><input id="jn" maxlength="60" autocomplete="name" placeholder="Имя" value="${esc(ME?.name || "")}"></div>
-    <div class="actions"><button class="btn" data-x>Не сейчас</button><button class="btn primary" data-ok>Войти в команду</button></div>`, (m, close) => {
-    const inp = m.querySelector("#jn"), okBtn = m.querySelector("[data-ok]");
-    setTimeout(() => inp.focus(), 50);
+  if (isMember()) { cleanJoinUrl(); return toast("Вы уже в команде на этом устройстве"); }
+  modal(`<h3>Вход для команды</h3>
+    <div class="muted" style="font-size:14px">Введите свой номер телефона — только цифры.</div>
+    <div class="field" style="margin-top:12px"><label>Номер телефона</label>
+      <input id="jp" type="tel" inputmode="numeric" autocomplete="tel" placeholder="05X-XXX-XXXX" maxlength="20" dir="ltr"></div>
+    <div class="field" id="jnBox" hidden><label>Вашего номера нет в списке команды. Как вас зовут?</label>
+      <input id="jn" maxlength="60" autocomplete="name" placeholder="Имя">
+      <div class="hint">Руководитель получит заявку и одобрит её.</div></div>
+    <div class="actions"><button class="btn" data-x>Не сейчас</button><button class="btn primary" data-ok>Войти</button></div>`, (m, close) => {
+    const ph = m.querySelector("#jp"), nmBox = m.querySelector("#jnBox"), nm = m.querySelector("#jn"), okBtn = m.querySelector("[data-ok]");
+    setTimeout(() => ph.focus(), 50);
     m.querySelector("[data-x]").onclick = () => { cleanJoinUrl(); close(); };
     const ok = async () => {
-      const name = inp.value.trim(); if (!name) return toast("Напишите имя");
+      const phone = normPhone(ph.value);
+      if (phone.length < 11 || phone.length > 15) return toast("Проверьте номер: например 052-123-4567");
+      if (!nmBox.hidden && !nm.value.trim()) return toast("Напишите имя");
       if (!db) return toast("Нет связи с базой — попробуйте позже");
-      okBtn.disabled = true; okBtn.textContent = "Подключаю…";
+      okBtn.disabled = true; okBtn.textContent = "Проверяю…";
       try {
         let { data: { session } } = await db.auth.getSession();
         if (!session) {
           const r = await db.auth.signInAnonymously();
-          if (r.error) {
-            const msg = /anonymous/i.test(r.error.message) ? "В Supabase не включён вход по ссылке (Anonymous sign-ins)" : "Не получилось войти: " + r.error.message;
-            return toast(msg);
-          }
+          if (r.error) return toast(/anonymous/i.test(r.error.message) ? "Вход временно недоступен (Anonymous sign-ins выключены в Supabase)" : "Не получилось войти: " + r.error.message);
         }
-        const { data, error } = await db.rpc("join_team", { p_code: code, p_name: name });
-        if (error) return toast(/invalid invite/.test(error.message) ? "Ссылка устарела — попросите у руководителя новую" : "Ошибка: " + error.message);
+        const { data, error } = await db.rpc("join_by_phone", { p_code: code, p_phone: phone, p_name: nmBox.hidden ? null : nm.value.trim() });
+        if (error) {
+          const msg = error.message || "";
+          return toast(/invalid invite/.test(msg) ? "Ссылка устарела — попросите у руководителя новую"
+            : /too many/.test(msg) ? "Слишком много попыток. Попробуйте через час."
+            : /bad phone/.test(msg) ? "Проверьте номер: например 052-123-4567" : "Ошибка: " + msg);
+        }
+        if (data && data.need_name) { nmBox.hidden = false; ph.readOnly = true; setTimeout(() => nm.focus(), 50); okBtn.textContent = "Отправить заявку"; return; }
         ME = data; state.admin = ME?.role === "admin"; store.set("cloud:me", ME);
         cleanJoinUrl(); close();
         if (ME?.role === "pending") { toast("Заявка отправлена — ждите одобрения"); show(""); return; }
-        toast(`Добро пожаловать, ${name}!${state.admin ? " Вы админ." : ""}`);
+        toast(`Добро пожаловать, ${ME.name}!`);
         await cloudFetch(); show(currentId);
-      } finally { okBtn.disabled = false; okBtn.textContent = "Войти в команду"; }
+      } finally { okBtn.disabled = false; if (okBtn.textContent === "Проверяю…") okBtn.textContent = nmBox.hidden ? "Войти" : "Отправить заявку"; }
     };
     okBtn.onclick = ok;
-    inp.onkeydown = e => { if (e.key === "Enter") ok(); };
+    ph.onkeydown = nm.onkeydown = e => { if (e.key === "Enter") ok(); };
   });
 }
 
@@ -273,9 +297,14 @@ async function teamDialog() {
   modal(`<h3>Команда</h3>
     <div class="field"><label for="myName">Ваше имя</label><div class="inline-form"><input id="myName" maxlength="60" value="${esc(ME.name)}"><button class="btn" id="saveName">Сохранить</button></div>
       <div class="hint muted" style="font-size:13px;margin-top:4px">${ME.role === "admin" ? "Вы админ" : "Вы в команде: можно добавлять и править песни и сет-листы"}</div></div>
-    ${state.admin ? `<div class="sect"><div class="sect-h">Новые участники</div><div id="pendingBox" class="muted">Загружаю…</div></div>
-      <div class="sect"><div class="sect-h">Ссылка-приглашение</div><div id="invites" class="muted">Загружаю…</div></div>
-      <div class="sect"><div class="sect-h">Участники</div><div id="members" class="muted">Загружаю…</div></div>
+    ${state.admin ? `<div class="sect"><div class="sect-h">Заявки</div><div id="pendingList" class="muted">Загружаю…</div></div>
+      <div class="sect"><div class="sect-h">Список команды</div>
+        <div class="hint" style="margin:-4px 0 8px">Кто есть в списке, входит по своему номеру сразу. Остальные номера — через заявку.</div>
+        <div id="members" class="muted">Загружаю…</div>
+        <details class="add-people"><summary>+ Добавить людей</summary>
+          <textarea id="peopleIn" rows="4" placeholder="По одному в строке: имя и телефон&#10;Вася, 052-123-4567&#10;Аня 054 765 4321"></textarea>
+          <button class="btn primary" id="peopleAdd">Добавить в список</button></details></div>
+      <div class="sect"><div class="sect-h">Ссылка для входа</div><div id="invites" class="muted">Загружаю…</div></div>
       <div class="sect"><div class="sect-h">AI-агент</div><div id="aiUsage" class="muted" style="font-size:14px">Загружаю…</div></div>
       <div class="sect"><button class="btn" id="todoBtn">📝 Что доделать в песнях</button></div>` : ""}
     ${deleted.length ? `<div class="sect"><div class="sect-h">Удалённые песни</div>${deleted.map(s => `<div class="team-row"><span dir="auto">${esc(s.title)}</span><span class="muted">${fmtWhen(s.deleted_at || s.updated_at)}${s.updated_by_name ? " · " + esc(s.updated_by_name) : ""}</span><button class="btn" data-restore="${esc(s.id)}">Вернуть</button></div>`).join("")}</div>` : ""}
@@ -302,42 +331,36 @@ async function teamDialog() {
       const box = m.querySelector("#invites"); if (!box) return;
       if (error) return box.textContent = "Не удалось загрузить: " + error.message;
       const label = { editor: "Для команды", admin: "Для админов — никому не пересылайте" };
-      const ed = data.find(x => x.role === "editor");
-      const pb = m.querySelector("#pendingBox");
-      if (pb && ed) {
-        pb.innerHTML = `<label class="chk"><input type="checkbox" id="reqAppr" ${ed.require_approval ? "checked" : ""}> Одобрять новых вручную</label>
-          <div class="hint">${ed.require_approval ? "Кто откроет ссылку, сначала попадёт сюда — и получит доступ, когда вы нажмёте «Принять»." : "Сейчас любой со ссылкой сразу получает доступ."}</div>
-          <div id="pendingList"></div>`;
-        pb.querySelector("#reqAppr").onchange = async e => {
-          const { error } = await db.rpc("set_require_approval", { p_on: e.target.checked });
-          if (error) { e.target.checked = !e.target.checked; return toast("Не получилось: " + error.message); }
-          toast(e.target.checked ? "Теперь новых нужно одобрять" : "Одобрение выключено"); loadInvites();
-        };
-        loadPending();
-      }
-      box.innerHTML = ["editor", "admin"].map(r => data.find(x => x.role === r && x.active)).filter(Boolean).map(inv => `
-        <div class="team-inv"><div><b>${label[inv.role]}</b><span class="muted"> · входили по ней: ${inv.uses}</span></div>
+      box.innerHTML = ["editor"].map(r => data.find(x => x.role === r && x.active)).filter(Boolean).map(inv => `
+        <div class="team-inv"><div class="hint" style="margin:0">Откроют ссылку — сайт спросит номер телефона. Входов по ней: ${inv.uses}</div>
           <input readonly value="${esc(base + "?join=" + inv.code)}">
           <div style="display:flex;gap:8px"><button class="btn" data-copy="${esc(base + "?join=" + inv.code)}">Скопировать</button><button class="btn" data-rot="${inv.role}">Новая ссылка</button></div></div>`).join("");
       box.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.copy); toast("Ссылка скопирована"); } catch { toast("Скопируйте ссылку из поля"); } });
-      box.querySelectorAll("[data-rot]").forEach(b => b.onclick = () => confirmDialog("Сделать новую ссылку? Старая перестанет работать (кто уже вошёл — останется в команде).", "Сделать", async () => {
+      box.querySelectorAll("[data-rot]").forEach(b => b.onclick = () => confirmDialog("Сделать новую ссылку? Старая перестанет работать (кто уже вошёл — останется; на новых устройствах войдут по новой ссылке).", "Сделать", async () => {
         const { error } = await db.rpc("rotate_invite", { p_role: b.dataset.rot });
         if (error) return toast("Не получилось: " + error.message);
         toast("Новая ссылка готова"); loadInvites();
       }));
+    };
+    let phones = {}; // user_id -> номер
+    const loadPhones = async () => {
+      const { data } = await db.from("member_phones").select("*");
+      phones = Object.fromEntries((data || []).map(x => [x.user_id, x.phone]));
     };
     const loadPending = async () => {
       const box = m.querySelector("#pendingList"); if (!box) return;
       const { data, error } = await db.from("members").select("*").eq("role", "pending").order("joined_at");
       if (error) return box.textContent = "Не удалось загрузить: " + error.message;
       cloud.pending = data.length;
-      box.innerHTML = data.length ? data.map(u => `<div class="member-row"><div class="who"><b>${esc(u.name)}</b> ждёт одобрения<span class="muted">${fmtWhen(u.joined_at)}</span></div>
+      box.innerHTML = data.length ? data.map(u => `<div class="member-row"><div class="who"><b>${esc(u.name)}</b> <span dir="ltr">${esc(fmtPhone(phones[u.user_id]))}</span><span class="muted">${fmtWhen(u.joined_at)}</span></div>
         <button class="btn primary" data-appr="${u.user_id}">Принять</button><button class="mini-btn" data-rej="${u.user_id}" title="Отклонить">✕</button></div>`).join("")
-        : `<div class="muted" style="font-size:13px;margin-top:6px">Заявок нет.</div>`;
+        : `<div class="muted" style="font-size:13px">Заявок нет.</div>`;
       box.querySelectorAll("[data-appr]").forEach(b => b.onclick = async () => {
-        const { error } = await db.from("members").update({ role: "editor" }).eq("user_id", b.dataset.appr);
+        const uid = b.dataset.appr, u = data.find(x => x.user_id === uid);
+        const { error } = await db.from("members").update({ role: "editor" }).eq("user_id", uid);
         if (error) return toast("Не получилось: " + error.message);
-        toast("Принят в команду"); loadPending(); loadMembers();
+        if (phones[uid]) await db.from("allowed_people").upsert({ phone: phones[uid], name: u.name, added_by: ME.name });
+        toast("Принят в команду — номер добавлен в список"); loadPending(); loadMembers();
       });
       box.querySelectorAll("[data-rej]").forEach(b => b.onclick = async () => {
         const { error } = await db.from("members").delete().eq("user_id", b.dataset.rej);
@@ -345,24 +368,66 @@ async function teamDialog() {
         toast("Заявка отклонена"); loadPending();
       });
     };
+    // список команды: люди из списка (по номеру) + входы без номера (админы по паролю, старые входы)
     const loadMembers = async () => {
-      const { data: all, error } = await db.from("members").select("*").order("joined_at");
-      const data = (all || []).filter(u => u.role !== "pending");
       const box = m.querySelector("#members"); if (!box) return;
+      const [{ data: all, error }, { data: people }] = await Promise.all([
+        db.from("members").select("*").order("joined_at"), db.from("allowed_people").select("*").order("name")]);
       if (error) return box.textContent = "Не удалось загрузить: " + error.message;
-      box.innerHTML = data.map(u => `<div class="member-row"><div class="who"><b>${esc(u.name)}</b>${u.user_id === myId ? ' <span class="pill grey">это вы</span>' : ""}<span class="muted">был(а) ${fmtWhen(u.last_seen)}</span></div>
-        ${u.user_id === myId ? `<span class="pill">${u.role === "admin" ? "админ" : "в команде"}</span><span></span>` : `<select data-role="${u.user_id}" class="mini-sel" title="Роль"><option value="editor" ${u.role === "editor" ? "selected" : ""}>в команде</option><option value="admin" ${u.role === "admin" ? "selected" : ""}>админ</option></select><button class="mini-btn" data-del="${u.user_id}" title="Убрать из команды">✕</button>`}</div>`).join("") || "Пока никого";
-      box.querySelectorAll("[data-role]").forEach(s => s.onchange = async () => {
-        const { error } = await db.from("members").update({ role: s.value }).eq("user_id", s.dataset.role);
+      const mem = (all || []).filter(u => u.role !== "pending");
+      const byPhone = {};
+      mem.forEach(u => { const ph = phones[u.user_id]; if (ph) (byPhone[ph] ||= []).push(u); });
+      const listed = new Set((people || []).map(p => p.phone));
+      const roleSel = (ids, role) => `<select data-role="${ids.join(",")}" class="mini-sel" title="Роль"><option value="editor" ${role !== "admin" ? "selected" : ""}>в команде</option><option value="admin" ${role === "admin" ? "selected" : ""}>админ</option></select>`;
+      const rows = (people || []).map(p => {
+        const devs = byPhone[p.phone] || [], last = devs.map(d => d.last_seen).sort().pop();
+        const mine = devs.some(d => d.user_id === myId), role = devs.some(d => d.role === "admin") ? "admin" : "editor";
+        return `<div class="member-row"><div class="who"><b>${esc(p.name)}</b>${mine ? ' <span class="pill grey">это вы</span>' : ""} <span dir="ltr" class="muted" style="display:inline">${esc(fmtPhone(p.phone))}</span>
+          <span class="muted">${devs.length ? `был(а) ${fmtWhen(last)}${devs.length > 1 ? ` · устройств: ${devs.length}` : ""}` : "ещё не входил(а)"}</span></div>
+          ${devs.length && !mine ? roleSel(devs.map(d => d.user_id), role) : "<span></span>"}
+          ${mine ? "<span></span>" : `<button class="mini-btn" data-delp="${p.phone}" title="Убрать из команды">✕</button>`}</div>`;
+      });
+      const others = mem.filter(u => !phones[u.user_id] || !listed.has(phones[u.user_id]));
+      const orows = others.map(u => `<div class="member-row"><div class="who"><b>${esc(u.name)}</b>${u.user_id === myId ? ' <span class="pill grey">это вы</span>' : ""}<span class="muted">${phones[u.user_id] ? fmtPhone(phones[u.user_id]) + " · не в списке · " : u.role === "admin" ? "вход по паролю · " : "старый вход по ссылке · "}был(а) ${fmtWhen(u.last_seen)}</span></div>
+        ${u.user_id === myId ? `<span class="pill">${u.role === "admin" ? "админ" : "в команде"}</span><span></span>` : `${roleSel([u.user_id], u.role)}<button class="mini-btn" data-del="${u.user_id}" title="Убрать">✕</button>`}</div>`);
+      box.innerHTML = (rows.join("") || `<div class="muted" style="font-size:13px">Список пуст — добавьте людей ниже.</div>`)
+        + (orows.length ? `<div class="sect-h" style="margin-top:12px">Другие входы</div>${orows.join("")}` : "");
+      box.querySelectorAll("[data-role]").forEach(sel => sel.onchange = async () => {
+        if (sel.value === "admin" && !confirm("Сделать админом? Админ управляет командой и удаляет песни.")) { sel.value = "editor"; return; }
+        const { error } = await db.from("members").update({ role: sel.value }).in("user_id", sel.dataset.role.split(","));
         toast(error ? "Не получилось: " + error.message : "Роль изменена");
       });
-      box.querySelectorAll("[data-del]").forEach(b => b.onclick = () => confirmDialog("Убрать из команды? Человек сможет смотреть песни, но не править. Чтобы он не вернулся по старой ссылке, сделайте новую.", "Убрать", async () => {
+      box.querySelectorAll("[data-delp]").forEach(b => b.onclick = () => confirmDialog("Убрать из команды? Номер удалится из списка, а на всех устройствах этого человека сайт закроется.", "Убрать", async () => {
+        const ph = b.dataset.delp, ids = (byPhone[ph] || []).map(d => d.user_id);
+        const r1 = await db.from("allowed_people").delete().eq("phone", ph);
+        const r2 = ids.length ? await db.from("members").delete().in("user_id", ids) : { error: null };
+        if (r1.error || r2.error) return toast("Не получилось: " + (r1.error || r2.error).message);
+        toast("Убран(а) из команды"); loadMembers();
+      }));
+      box.querySelectorAll("[data-del]").forEach(b => b.onclick = () => confirmDialog("Убрать этот вход? На этом устройстве сайт закроется.", "Убрать", async () => {
         const { error } = await db.from("members").delete().eq("user_id", b.dataset.del);
         if (error) return toast("Не получилось: " + error.message);
-        toast("Убран из команды"); loadMembers();
+        toast("Убрано"); loadMembers();
       }));
     };
-    loadInvites(); loadMembers();
+    // добавить людей списком: «Имя, телефон» по строке
+    m.querySelector("#peopleAdd").onclick = async () => {
+      const rows = [], bad = [];
+      m.querySelector("#peopleIn").value.split("\n").map(l => l.trim()).filter(Boolean).forEach(l => {
+        const mm = /(\+?[\d][\d\s\-().]{7,}\d)/.exec(l);
+        const phone = mm ? normPhone(mm[1]) : "";
+        const name = (mm ? l.replace(mm[1], "") : l).replace(/[,;:\t|–—-]+/g, " ").replace(/\s+/g, " ").trim();
+        if (phone.length >= 11 && phone.length <= 15 && name) rows.push({ phone, name: name.slice(0, 60), added_by: ME.name }); else bad.push(l);
+      });
+      if (!rows.length) return toast("Не нашёл строк вида «Имя, телефон»");
+      const { error } = await db.from("allowed_people").upsert(rows);
+      if (error) return toast("Не получилось: " + error.message);
+      m.querySelector("#peopleIn").value = bad.join("\n");
+      toast(`Добавлено: ${rows.length}${bad.length ? ` · не разобрал строк: ${bad.length} (остались в поле)` : ""}`);
+      loadMembers();
+    };
+    loadPhones().then(() => { loadPending(); loadMembers(); });
+    loadInvites();
     aiUsageHtml().then(h => { const el = m.querySelector("#aiUsage"); if (el) el.innerHTML = h; });
   });
 }
