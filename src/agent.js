@@ -150,3 +150,23 @@ async function aiUsageHtml() {
     return `В этом месяце: ${u.month_requests} ${plural(u.month_requests, "запрос", "запроса", "запросов")}, ≈ $${u.month_cost}`;
   } catch (e) { return esc(e.message); }
 }
+
+// песня из файла через AI (PDF или фото): Claude видит страницу целиком
+function fileToBase64(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1] || ""); r.onerror = rej; r.readAsDataURL(file); });
+}
+async function aiFileToResult(file) {
+  const isPdf = /\.pdf$/i.test(file.name) || file.type === "application/pdf";
+  const mt = isPdf ? "application/pdf" : (/^image\/(png|jpeg|webp|gif)$/.test(file.type) ? file.type : "image/jpeg");
+  if (file.size > 8 * 1024 * 1024) return { base: file.name, files: [file.name], error: "Файл больше 8 МБ" };
+  try {
+    const { result: out, cost } = await agentCall({ action: "import_file", name: file.name, media_type: mt, data: await fileToBase64(file) });
+    if (!out || out.found === false || !(out.lyrics || "").trim()) return { base: file.name, files: [file.name], error: out?.notes || "Песня не найдена" };
+    const d = agentDraft(out, { links: [], tags: [], translit: [] }, null);
+    const notes = [`✨ Прочитано AI${cost ? ` (≈$${cost})` : ""} — проверьте текст и аккорды`];
+    if (out.notes) notes.push(out.notes);
+    return { base: file.name, files: [file.name], notes,
+      song: { title: d.title || file.name.replace(/\.[^.]+$/, ""), title_alt: d.title_alt || "", key: d.key || guessKey(d.lyrics || ""), lang: d.lang || detectLang(d.lyrics || ""),
+        lyrics: d.lyrics || "", chord_chart: d.chord_chart || "", translit: d.translit || [], links: d.links || [], tags: d.tags || [], notes: out.notes || "" } };
+  } catch (e) { return { base: file.name, files: [file.name], error: e.message }; }
+}

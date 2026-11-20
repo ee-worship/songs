@@ -158,7 +158,7 @@ const SAVE_TOOL = {
 };
 
 type Usage = { input: number; output: number; searches: number };
-async function callClaude(system: string, user: string, useWeb: boolean, usage: Usage) {
+async function callClaude(system: string, user: string | unknown[], useWeb: boolean, usage: Usage) {
   const key = env("ANTHROPIC_API_KEY");
   if (!key) throw new Error("Не задан ключ Claude API (ANTHROPIC_API_KEY в секретах Supabase)");
   const tools: unknown[] = [SAVE_TOOL];
@@ -221,6 +221,23 @@ async function doImport(input: string, usage: Usage) {
   return await callClaude(SYSTEM, user, useWeb, usage);
 }
 
+// песня из файла: PDF или фото — Claude смотрит на страницу целиком (видит и текст, нарисованный картинкой)
+const FILE_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif"];
+async function doImportFile(name: string, mediaType: string, data: string, usage: Usage) {
+  const block = mediaType === "application/pdf"
+    ? { type: "document", source: { type: "base64", media_type: mediaType, data } }
+    : { type: "image", source: { type: "base64", media_type: mediaType, data } };
+  const text = `В файле «${name}» — песня (возможно, на иврите или в двух колонках). Перепиши её в формат нашего песенника.
+- Слова переписывай точно как в файле, ничего не сокращай и не исправляй (огласовки в иврите оставь, если они есть).
+- Аккорды ставь по их положению над словами. В строке на иврите аккорд, стоящий над словом, ставь прямо перед этим словом (порядок чтения справа налево).
+- Если на странице две колонки: для текста на иврите сначала правая колонка, потом левая; для русского — сначала левая.
+- Подписи частей (בית, פזמון, Куплет, Припев…) — отдельной строкой с двоеточием; номера с нулём впереди («01 ПРИПЕВ») — это порядок частей, их не пиши.
+- Шапку (авторы, темп, BPM, «סולם», подзаголовок) не включай в текст: тональность — в key, остальное коротко — в notes.
+- Для песни на иврите сделай translit.
+- Если в файле нет песни — found=false.`;
+  return await callClaude(SYSTEM, [block, { type: "text", text }], false, usage);
+}
+
 async function doEnrich(song: any, tasks: string[], usage: Usage) {
   const lines = String(song.lyrics || "").split("\n");
   const textLines = lines.map(l => l.replace(/\[[^\]]*\]/g, "").trim()).filter(t => t && !SECTION_RE.test(t));
@@ -275,6 +292,11 @@ Deno.serve(async (req) => {
     if (body.action === "import") {
       if (!body.input || String(body.input).length > 500) return json({ error: "Нужна ссылка или название песни" }, 400);
       result = await doImport(String(body.input), usage);
+    } else if (body.action === "import_file") {
+      const mt = String(body.media_type || "");
+      if (!FILE_TYPES.includes(mt)) return json({ error: "Нужен PDF или картинка (PNG, JPG)" }, 400);
+      if (!body.data || String(body.data).length > 12_000_000) return json({ error: "Файл слишком большой (до 8 МБ)" }, 400);
+      result = await doImportFile(String(body.name || "файл").slice(0, 120), mt, String(body.data), usage);
     } else if (body.action === "enrich") {
       if (!body.song || !Array.isArray(body.tasks) || !body.tasks.length) return json({ error: "Нужны песня и задачи" }, 400);
       result = await doEnrich(body.song, body.tasks.map(String), usage);
@@ -285,7 +307,7 @@ Deno.serve(async (req) => {
   try {
     await rest("agent_log", {
       method: "POST", headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({ user_id: uid, user_name: me.name, action: body.action, input: String(body.input || body.song?.title || "").slice(0, 300),
+      body: JSON.stringify({ user_id: uid, user_name: me.name, action: body.action, input: String(body.input || body.name || body.song?.title || "").slice(0, 300),
         ok: !error, error: error.slice(0, 500), input_tokens: usage.input, output_tokens: usage.output, searches: usage.searches, cost_usd: Math.round(cost * 10000) / 10000 }),
     });
   } catch (e) { console.error("log failed", e); }

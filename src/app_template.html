@@ -2231,17 +2231,24 @@ function importPdfDialog() {
     <div class="drop" id="drop">
       <input type="file" id="pdfIn" multiple hidden>
       <input type="file" id="imgIn" accept="image/*" multiple hidden>
-      <div class="drop-btns"><button type="button" class="btn primary" id="pickPdf">${ICON.up}Выбрать PDF</button><button type="button" class="btn" id="pickImg">${ICON.up}Скриншоты / фото</button></div>
+      <input type="file" id="aiIn" multiple hidden>
+      <div class="drop-btns"><button type="button" class="btn primary" id="pickPdf">${ICON.up}Выбрать PDF</button><button type="button" class="btn" id="pickImg">${ICON.up}Скриншоты / фото</button>
+        ${CLOUD && state.admin ? `<button type="button" class="btn" id="pickAi" title="Claude читает страницу целиком: точнее для иврита, двух колонок и текста-картинки. 1–3 цента за файл.">✨ PDF или фото через AI</button>` : ""}</div>
       <div class="drop-hint">или перетащите файлы сюда</div></div>
     <div id="impRes"></div>
     <div class="actions" id="impAct"><button class="btn" data-x>Закрыть</button></div>`, (m, close) => {
     const inp = m.querySelector("#pdfIn"), drop = m.querySelector("#drop"), box = m.querySelector("#impRes");
     let results = [], imgLang = "rus";
     m.querySelector("#impLang").onclick = e => { const b = e.target.closest("[data-l]"); if (!b) return; imgLang = b.dataset.l; m.querySelectorAll("#impLang button").forEach(x => x.classList.toggle("on", x === b)); };
-    const processFiles = async files => {
+    const processFiles = async (files, ai = false) => {
+      const prog = t => { const p = m.querySelector("#prog"); if (p) p.textContent = t; };
+      if (ai) {
+        const res = []; let k = 0;
+        for (const f of files) { prog(`✨ AI читает файл ${++k} из ${files.length}: ${f.name} (обычно 20–60 секунд)`); res.push(await aiFileToResult(f)); }
+        return res;
+      }
       const pdfs = files.filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf");
       const imgs = files.filter(f => /^image\//.test(f.type));
-      const prog = t => { const p = m.querySelector("#prog"); if (p) p.textContent = t; };
       const res = pdfs.length ? await importPdfFiles(pdfs, (i, n, name) => prog(`Читаю PDF ${i} из ${n}: ${name}`)) : [];
       let k = 0;
       for (const f of imgs) {
@@ -2257,12 +2264,12 @@ function importPdfDialog() {
       }
       return res;
     };
-    const run = async files => {
+    const run = async (files, ai = false) => {
       files = [...files].filter(f => /\.pdf$/i.test(f.name) || f.type === "application/pdf" || /^image\//.test(f.type));
       if (!files.length) return toast("Нужны PDF или картинки");
       drop.hidden = true;
       box.innerHTML = `<div class="muted" style="padding:14px 0" id="prog">Читаю файлы…</div>`;
-      results = results.concat(await processFiles(files));
+      results = results.concat(await processFiles(files, ai));
       draw();
     };
     const existing = new Set(SONGS.map(s => norm(s.title)));
@@ -2315,6 +2322,9 @@ function importPdfDialog() {
     imgInp.onchange = () => { const fl = [...imgInp.files]; imgInp.value = ""; run(fl); };
     m.querySelector("#pickPdf").onclick = () => inp.click();
     m.querySelector("#pickImg").onclick = () => imgInp.click();
+    const aiInp = m.querySelector("#aiIn");
+    m.querySelector("#pickAi")?.addEventListener("click", () => aiInp.click());
+    aiInp.onchange = () => { const fl = [...aiInp.files]; aiInp.value = ""; run(fl, true); };
     drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("over"));
     drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); run(e.dataTransfer.files); });
