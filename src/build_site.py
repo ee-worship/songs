@@ -74,7 +74,7 @@ for s in json.loads(src.read_text(encoding="utf-8")):
 assert len({s["id"] for s in songs}) == len(songs)
 tpl = (ROOT / "app_template.html").read_text(encoding="utf-8")
 tpl = tpl.replace("/*PDF_IMPORT*/", (ROOT / "pdf_import.js").read_text(encoding="utf-8"))
-tpl = tpl.replace("/*CLOUD_JS*/", (ROOT / "cloud.js").read_text(encoding="utf-8") + "\n" + (ROOT / "agent.js").read_text(encoding="utf-8"))
+tpl = tpl.replace("/*CLOUD_JS*/", (ROOT / "cloud.js").read_text(encoding="utf-8") + "\n" + (ROOT / "agent.js").read_text(encoding="utf-8") + "\n" + (ROOT / "feedback.js").read_text(encoding="utf-8"))
 # общая база: CLOUD_URL и CLOUD_KEY (publishable) — тогда сайт работает через Supabase
 import os
 if os.environ.get("CLOUD_URL"):

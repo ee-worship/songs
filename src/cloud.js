@@ -108,6 +108,7 @@ async function cloudFetch() {
     if (!c.error) cloud.pending = c.count || 0;
   }
   persistCloud(); loadSongs(); cloud.ready = true;
+  try { await loadFeedback(); } catch (e) { console.warn(e); }
   refreshView(); return true;
 }
 
@@ -167,13 +168,15 @@ function adminLoginDialog() {
   });
 }
 function forgetCloudData() {
-  cloud.songs = null; cloud.sets = null; cloud.queue = [];
+  cloud.songs = null; cloud.sets = null; cloud.queue = []; forgetFeedback();
   persistCloud(); loadSongs();
 }
 
 let refreshPending = false;
 function refreshView() {
-  if (current === "edit" || document.querySelector(".modal-bg") || proj || document.getElementById("stage") || openMenu) { refreshPending = true; return; }
+  const typing = document.getElementById("fbText");
+  if (current === "edit" || document.querySelector(".modal-bg") || proj || document.getElementById("stage") || openMenu
+      || (typing && (typing.value || document.activeElement === typing))) { refreshPending = true; return; }
   refreshPending = false;
   if (!isMember()) { show(""); return; }
   const y = scrollY;
@@ -211,6 +214,8 @@ async function cloudInit() {
   db.channel("live")
     .on("postgres_changes", { event: "*", schema: "public", table: "songs" }, p => onLive("songs", p))
     .on("postgres_changes", { event: "*", schema: "public", table: "setlists" }, p => onLive("setlists", p))
+    .on("postgres_changes", { event: "*", schema: "public", table: "song_votes" }, onFeedbackLive)
+    .on("postgres_changes", { event: "*", schema: "public", table: "song_comments" }, onFeedbackLive)
     .subscribe();
   setInterval(flushQueue, 20000);
   addEventListener("online", () => { flushQueue(); cloudFetch(); });
