@@ -2170,6 +2170,7 @@ function renderSong(song) {
       <div class="song-bar">
         <a class="btn" href="#" data-go="${set ? set.id : ""}" id="back">${ICON.back}<span class="hide-sm">${set ? "Сет-лист" : "Все песни"}</span></a>
         <span class="spacer"></span>
+        <button class="btn" id="editTop" title="Редактировать песню">${ICON.edit}<span class="hide-sm">Править</span></button>
         <button class="icon-btn" id="qsBtn" title="Быстрый поиск ( / )">${ICON.search}</button>
         <button class="icon-btn" id="stageBtn" title="Во весь экран">${ICON.full}</button>
         <div class="menu-wrap">
@@ -2216,7 +2217,7 @@ function renderSong(song) {
       ${CLOUD && FB_ON() && song.status === "proposed" ? `<div class="fb-votes" id="fbVotes"></div>` : ""}
       <div class="song-actions">
         ${listenButtons(song)}
-        <button class="icon-btn" id="editLinks" title="${song.links.length ? "Изменить ссылку на запись" : "Добавить ссылку на запись"}">${song.links.length ? ICON.edit : ICON.plus}</button>
+        <button class="icon-btn" id="editLinks" title="${song.links.length ? "Изменить ссылку на запись" : "Добавить ссылку на запись"}">${song.links.length ? ICON.link : ICON.plus}</button>
       </div>
       <div id="player"></div>
       ${hasChords ? `<details class="howto" id="howto" ${state.howtoOpen ? "open" : ""}><summary>🎸🎹 Как играть${capo ? ` · <b>капо ${capo}</b>` : ""}${song.notes ? " · есть заметки команды" : ""}</summary><div id="howtoBody"></div></details>` : ""}
@@ -2276,6 +2277,7 @@ function renderSong(song) {
   document.querySelectorAll("[data-fold]").forEach(b => b.onclick = () => { state.foldRepeats = b.dataset.fold === "1"; store.set("foldRepeats", state.foldRepeats); rerender(); });
   bindStructure(app);
   if (CLOUD) bindFeedback(song);
+  document.getElementById("editTop").onclick = () => go("edit-" + song.id);
   document.querySelectorAll("[data-fs]").forEach(b => b.onclick = e => {
     e.stopPropagation();
     state.fontSize = Math.min(34, Math.max(13, state.fontSize + +b.dataset.fs)); store.set("fs", state.fontSize);
@@ -2944,7 +2946,7 @@ const HEB1 = /[֐-׿]/, CYR1 = /[Ѐ-ӿ]/;
 function sectionLabel(text) {
   let t = text.trim().replace(/[:.]+$/, "").trim();
   if (HEB1.test(t)) return t + ":";
-  let m = /^(\d+)\s*(\D+)$/.exec(t); if (m) t = `${m[2].trim()} ${m[1]}`;
+  let m = /^(\d+)\s*(\D+)$/.exec(t); if (m) t = /^0\d/.test(m[1]) ? m[2].trim() : `${m[2].trim()} ${m[1]}`;
   m = /^([A-Za-z-]+)\s*(.*)$/.exec(t);
   if (m && SECTION_NAMES[m[1].toLowerCase()]) t = (SECTION_NAMES[m[1].toLowerCase()] + " " + m[2]).trim();
   return t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() + ":";
@@ -3109,7 +3111,7 @@ function splitColumns(lines, pageW) {
     for (const l of lines) {
       if (l.words.some(w => w.x0 < x && x < w.x1)) { crossing++; continue; }
       const tw = textWords(l), lw = tw.filter(w => w.x1 <= x), rw = tw.filter(w => w.x0 >= x);
-      if (lw.length && rw.length && rw[0].x0 - lw[lw.length - 1].x1 > l.size * 3) split++;
+      if (lw.length && rw.length && rw[0].x0 - lw[lw.length - 1].x1 > l.size * 2) split++;
     }
     if (split >= 3 && (!best || split > best[0] || (split === best[0] && crossing < best[1]))) best = [split, crossing, x];
   }
@@ -3222,9 +3224,23 @@ function buildSongFromCols(cols, { autowrap = false, metaTitle = "", guessTitle 
     break;
   }
   const song = { title: titleLine ? titleLine.text : metaTitle, titleDetected: !!titleLine, key: "", lyrics: "" };
+  const skip = new Set(titleLine ? [titleLine] : []), head = [];
+  if (titleLine) {
+    const alt = body.find(l => l !== titleLine && !l.isChords && Math.abs(l.top - titleLine.top) < titleLine.size * 0.6 && l.size > medSize * 1.15);
+    if (alt) { song.title_alt = alt.text; skip.add(alt); }
+    // строки мельче основного текста между названием и первой частью — подзаголовок/авторы -> в заметки
+    const textSize = median(body.filter(l => !l.isChords && !isSecLine(l.text)).map(l => l.size));
+    const firstSecTop = Math.min(...body.filter(l => isSecLine(l.text)).map(l => l.top));
+    if (isFinite(firstSecTop)) body.filter(l => !skip.has(l) && !l.isChords && l.top < firstSecTop && l.top > titleLine.top && l.size < textSize * 0.93 && !isChordLine(l.text.replace(/^[^:]*:/, "")))
+      .forEach(l => {
+        const km = PDF_KEY.exec(nch(l.text).trim());
+        if (km) { if (!song.key) song.key = km[1] + km[2] + (/minor|минор|moll/i.test(km[3]) ? "m" : ""); skip.add(l); return; }
+        head.push(l.text); skip.add(l);
+      });
+  }
   const out = [];
   for (let col of cols) {
-    col = col.filter(l => l !== titleLine);
+    col = col.filter(l => !skip.has(l));
     if (!col.length) continue;
     const gaps = col.slice(1).map((l, i) => l.top - col[i].bottom);
     const medGap = median(gaps), lh = median(col.map(l => l.bottom - l.top));
@@ -3239,7 +3255,12 @@ function buildSongFromCols(cols, { autowrap = false, metaTitle = "", guessTitle 
       if (l.isChords) {
         const nx = col[i + 1];
         if (nx && nx.top - l.bottom < lh * 2.2 && !nx.isChords && !isSecLine(nx.text)) { merged = mergeChords(l, nx); cur = nx; i += 2; }
-        else { merged = l.words.map(w => `[${nch(w.vis)}]`).join(" "); cur = l; i++; }
+        else {
+          merged = l.words.map(w => `[${nch(w.vis)}]`).join(" "); cur = l; i++;
+          // аккорды без слов не во вступлении/проигрыше — возможно, слова в PDF нарисованы картинкой
+          const lastLab = [...out].reverse().find(x => /:$/.test(x)) || "";
+          if (!/вступ|проигр|интро|intro|outro|interlude|instrumental|концовк|פתיחה|מעבר|סיום|אינטרו/i.test(lastLab)) song.chordOnly = (song.chordOnly || 0) + 1;
+        }
       } else { merged = l.text; cur = l; i++; }
       const plainPrev = (out[out.length - 1] || "").replace(CHORD_TAG, "").trim();
       const colRight = Math.max(...col.filter(x => Math.abs(x.x0 - (prev?.x0 ?? 0)) < (prev?.size ?? 10) * 3).map(x => x.x1), 0);
@@ -3252,7 +3273,6 @@ function buildSongFromCols(cols, { autowrap = false, metaTitle = "", guessTitle 
   }
   // шапка: в начале только явные метаданные (тональность, темп, авторы, альбом) — переносим в заметки
   const META = /(סולם|מפעם|קצב|נכתב|מילים ולחן|לחן:|key\b|bpm|tempo|capo|исполнитель|альбом|автор|слова и музыка|тональность|темп\b|\bmajor\b|\bminor\b|мажор|минор|music and lyrics)/i;
-  const head = [];
   while (out.length && (!out[0].trim() || (!/\[[^\]]+\]/.test(out[0]) && META.test(out[0]) && !SECTION_RE.test(out[0].trim())))) {
     const h = out.shift().trim(); if (!h) continue;
     const km = /(?:סולם|key(?:\s+of)?|тональность|тон)\s*:?\s*([A-H][#b]?m?)(?![\w#])/i.exec(h) || /^([A-H][#b]?)\s*(major|minor)/i.exec(h);
@@ -3260,6 +3280,9 @@ function buildSongFromCols(cols, { autowrap = false, metaTitle = "", guessTitle 
     head.push(fixHebPunct(h));
   }
   if (head.length) song.header = head.join(" · ");
+  // «Куплет:» без номеров несколько раз — нумеруем по порядку
+  const verses = out.filter(x => x === "Куплет:").length;
+  if (verses > 1) { let k = 0; for (let i = 0; i < out.length; i++) if (out[i] === "Куплет:") out[i] = `Куплет ${++k}:`; }
   song.lyrics = out.map(fixHebPunct).join("\n").trim().replace(/\n{3,}/g, "\n\n");
   if (!song.title) song.title = (out.map(x => x.replace(CHORD_TAG, "").replace(/\s+/g, " ").trim()).find(x => x && !x.endsWith(":")) || "").replace(/[,.;:!]+$/, "");
   return song;
@@ -3302,6 +3325,8 @@ async function importPdfFiles(files, onProgress) {
       const notes = [];
       let lyrics, chart = "", key = "", title = "";
       const header = (ch || wd || ok[0]).r.header || "";
+      const co = (ch || ok[0]).r.chordOnly || 0;
+      if (co >= 2) notes.push(`Есть строки только с аккордами (${co}) — возможно, часть слов в PDF нарисована картинкой (так бывает с огласовками). Проверьте и допишите.`);
       if (ch && withLyr(ch)) {
         lyrics = ch.r.lyrics; key = ch.r.key; title = ch.r.titleDetected ? ch.r.title : "";
         if (wd && wd !== ch) {
@@ -3315,7 +3340,7 @@ async function importPdfFiles(files, onProgress) {
       } else { lyrics = ok[0].r.lyrics; key = ok[0].r.key; title = ok[0].r.title; }
       const useBase = fs.length > 1 || /[-–—]\s*(слова|аккорды)/i.test(fs[0].name);
       const mainTitle = useBase ? base : (title || base);
-      const alt = title && normLine(title) !== normLine(mainTitle) && !normLine(mainTitle).includes(normLine(title)) && !/аккорд|слова/i.test(title) ? title : "";
+      const alt = (title && normLine(title) !== normLine(mainTitle) && !normLine(mainTitle).includes(normLine(title)) && !/аккорд|слова/i.test(title) ? title : "") || (ch || wd || ok[0]).r.title_alt || "";
       results.push({
         base, files: fs.map(f => f.name), notes,
         song: { title: mainTitle, title_alt: alt, key: key || (ch || ok[0]).r.key || guessKey(lyrics + "\n" + chart), lang: detectLang(lyrics + " " + mainTitle), lyrics, chord_chart: chart, notes: header },

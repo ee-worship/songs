@@ -1425,6 +1425,7 @@ function renderSong(song) {
       <div class="song-bar">
         <a class="btn" href="#" data-go="${set ? set.id : ""}" id="back">${ICON.back}<span class="hide-sm">${set ? "Сет-лист" : "Все песни"}</span></a>
         <span class="spacer"></span>
+        <button class="btn" id="editTop" title="Редактировать песню">${ICON.edit}<span class="hide-sm">Править</span></button>
         <button class="icon-btn" id="qsBtn" title="Быстрый поиск ( / )">${ICON.search}</button>
         <button class="icon-btn" id="stageBtn" title="Во весь экран">${ICON.full}</button>
         <div class="menu-wrap">
@@ -1471,7 +1472,7 @@ function renderSong(song) {
       ${CLOUD && FB_ON() && song.status === "proposed" ? `<div class="fb-votes" id="fbVotes"></div>` : ""}
       <div class="song-actions">
         ${listenButtons(song)}
-        <button class="icon-btn" id="editLinks" title="${song.links.length ? "Изменить ссылку на запись" : "Добавить ссылку на запись"}">${song.links.length ? ICON.edit : ICON.plus}</button>
+        <button class="icon-btn" id="editLinks" title="${song.links.length ? "Изменить ссылку на запись" : "Добавить ссылку на запись"}">${song.links.length ? ICON.link : ICON.plus}</button>
       </div>
       <div id="player"></div>
       ${hasChords ? `<details class="howto" id="howto" ${state.howtoOpen ? "open" : ""}><summary>🎸🎹 Как играть${capo ? ` · <b>капо ${capo}</b>` : ""}${song.notes ? " · есть заметки команды" : ""}</summary><div id="howtoBody"></div></details>` : ""}
@@ -1531,6 +1532,7 @@ function renderSong(song) {
   document.querySelectorAll("[data-fold]").forEach(b => b.onclick = () => { state.foldRepeats = b.dataset.fold === "1"; store.set("foldRepeats", state.foldRepeats); rerender(); });
   bindStructure(app);
   if (CLOUD) bindFeedback(song);
+  document.getElementById("editTop").onclick = () => go("edit-" + song.id);
   document.querySelectorAll("[data-fs]").forEach(b => b.onclick = e => {
     e.stopPropagation();
     state.fontSize = Math.min(34, Math.max(13, state.fontSize + +b.dataset.fs)); store.set("fs", state.fontSize);
