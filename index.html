@@ -2510,7 +2510,7 @@ function renderEditor(song) {
         <div class="help" id="aboveHelp" ${state.editMode === "above" ? "" : "hidden"}>Аккорды — отдельной строкой над словами. <b>Пробел</b> перед аккордом сдвигает его дальше по строке, <b>Backspace</b> — назад. Сохраняется как обычно.</div>
         <div class="help">Скриншот песни можно просто вставить сюда (Ctrl+V). Аккорд пишется в квадратных скобках перед слогом: <code>[Am]Слова [F]песни</code>. Раздел — отдельной строкой с двоеточием: <code>Припев:</code>. Пустая строка — новый блок (и новый слайд на проекторе).</div>
         <div class="ed-tools">
-          <button type="button" class="btn" id="fromPdf">${ICON.up}Из PDF</button><button type="button" class="btn" id="fromImg">${ICON.up}Из скриншота / фото</button><input type="file" id="pdfOne" hidden><input type="file" id="imgOne" accept="image/*" hidden>
+          <button type="button" class="btn" id="fromPdf">${ICON.up}Из PDF</button><button type="button" class="btn" id="fromImg">${ICON.up}Из скриншота / фото</button>${CLOUD && state.admin ? `<button type="button" class="btn" id="fromAi" title="Claude читает PDF или фото целиком: точнее для иврита, двух колонок и текста-картинки. 1–3 цента.">✨ PDF или фото через AI</button><input type="file" id="aiOne" hidden>` : ""}<input type="file" id="pdfOne" hidden><input type="file" id="imgOne" accept="image/*" hidden>
           <button type="button" class="btn" id="conv">Аккорды над строками → [Am]</button>
           <button type="button" class="btn" id="prevBtn">Предпросмотр</button>
         </div>
@@ -2658,11 +2658,21 @@ function renderEditor(song) {
   $("guess").onclick = () => { const k = guessKey(lyr.value + "\n" + $("f-chart").value); if (k) { $("f-key").value = k; toast("Похоже на " + k); } else toast("Не нашёл аккордов"); };
   $("fromPdf").onclick = () => $("pdfOne").click();
   $("fromImg").onclick = () => $("imgOne").click();
+  $("fromAi")?.addEventListener("click", () => $("aiOne").click());
+  $("aiOne")?.addEventListener("change", async () => {
+    const f = $("aiOne").files[0]; if (!f) return; $("aiOne").value = "";
+    const done = agentProgress("Читаю файл и готовлю песню…");
+    const r = await aiFileToResult(f); done();
+    if (r.error) return agentError(r.error);
+    await fillFrom(r.song, r.notes);
+    lyr.dispatchEvent(new Event("input"));
+  });
   const fillFrom = async (so, notes = []) => {
     if (lyr.value.trim() && !(await new Promise(res => confirmDialog("Заменить текст песни распознанным?", "Заменить", () => res(true))))) return;
     if (!$("f-title").value && so.title) $("f-title").value = so.title;
     if (!$("f-alt").value && so.title_alt) $("f-alt").value = so.title_alt;
     lyr.value = so.lyrics; if (so.chord_chart) $("f-chart").value = so.chord_chart;
+    if (so.translit && so.translit.some(Boolean) && $("f-tr")) $("f-tr").value = lyricLineIdx(so.lyrics).map(i => so.translit[i] || "").join("\n");
     if (so.key && !$("f-key").value) $("f-key").value = so.key;
     $("f-lang").value = so.lang; lyr.dir = so.lang === "he" ? "rtl" : "ltr"; $("trField").hidden = so.lang !== "he";
     trHelp(); toast("Готово — проверьте текст и аккорды" + (notes.length ? ". " + notes.join("; ") : "") + (so.notes ? ". Шапка файла: " + so.notes : ""));
