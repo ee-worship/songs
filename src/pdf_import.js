@@ -18,7 +18,7 @@ function loadPdfJs() {
 }
 
 const PDF_BIDI = /[‎‏‪-‮⁦-⁩]/g;
-const PDF_SECTION = /^(?:\d+\s*)?(куплет|припев|пред-?припев|бридж|мост|вступление|проигрыш|концовка|кода|окончание|запев|intro|verse|chorus|pre-?chorus|bridge|outro|interlude|instrumental|tag|ending|ch|v|בית|פזמון|גשר|פתיחה|סיום|מעבר|קודה)(\s*\d+)?(\s*[xх×]\s*\d+)?\s*[.:]?$/i;
+const PDF_SECTION = /^(?:\d+\s*)?(?:(?:пред|пре|pre|פרי|פרה|קדם)[\s\-–־]*)?(куплет|припев|бридж|мост|вступление|проигрыш|концовка|кода|окончание|запев|intro|verse|chorus|bridge|outro|interlude|instrumental|tag|ending|ch|v|בית|פזמון(?:\s+מקדים)?|גשר|פתיחה|סיום|מעבר|קודה|קורוס|אינטרו|אאוטרו|ורס|ברידג['׳]?)(\s*(?:\d+|[א-ת]['׳]))?(\s*[xх×]\s*\d+)?\s*[.:]?$/i;
 const PDF_KEY = /^([A-H])([#b]?)\s*(major|minor|мажор|минор|dur|moll)$/i;
 const SECTION_NAMES = { intro: "Вступление", verse: "Куплет", v: "Куплет", chorus: "Припев", ch: "Припев", "pre-chorus": "Пред-припев", prechorus: "Пред-припев", bridge: "Бридж", outro: "Концовка", ending: "Концовка", interlude: "Проигрыш", instrumental: "Проигрыш", tag: "Тэг" };
 const nch = t => t.replace(/♭/g, "b").replace(/♯/g, "#").replace(/–/g, "-");
@@ -47,11 +47,33 @@ function glyphW(c) {
     return glyphCache[c] = glyphCtx.measureText(c).width || 50;
   } catch { return 50; }
 }
-function pageChars(tc, pageH) {
+// рисуем страницу и проверяем, видны ли куски текста: белые буквы, которыми в документе
+// «двигают» аккорды, на экране не видны — их выбрасываем
+async function visibilityTest(page, pageH) {
+  try {
+    const scale = 2, v = page.getViewport({ scale });
+    const cv = document.createElement("canvas"); cv.width = Math.ceil(v.width); cv.height = Math.ceil(v.height);
+    const ctx = cv.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    await page.render({ canvasContext: ctx, viewport: v }).promise;
+    const img = ctx.getImageData(0, 0, cv.width, cv.height).data, W = cv.width, H = cv.height;
+    return it => {
+      const t = it.transform, size = Math.hypot(t[0], t[1]) || it.height || 10, base = pageH - t[5];
+      const x0 = Math.max(0, Math.floor(t[4] * scale)), x1 = Math.min(W, Math.ceil((t[4] + (it.width || size * 0.5)) * scale));
+      const y0 = Math.max(0, Math.floor((base - size * 0.8) * scale)), y1 = Math.min(H, Math.ceil((base + size * 0.15) * scale));
+      let dark = 0;
+      for (let y = y0; y < y1 && dark < 3; y++) for (let x = x0; x < x1; x++) {
+        const i = (y * W + x) * 4; if (img[i] + img[i + 1] + img[i + 2] < 600 && ++dark >= 3) break;
+      }
+      return dark >= 3 || x1 <= x0 || y1 <= y0;
+    };
+  } catch { return () => true; }
+}
+function pageChars(tc, pageH, visible = () => true) {
   const out = [];
   for (const it of tc.items) {
     const str = (it.str || "").replace(PDF_BIDI, "");
-    if (!str.trim()) continue;
+    if (!str.trim() || (/^[A-Za-z\\\/|.\-–—_ ]{1,3}$/.test(str.trim()) && !visible(it))) continue;
     const t = it.transform, size = Math.hypot(t[0], t[1]) || it.height || 10;
     // pdf.js даёт ширину всего куска текста; ширину каждой буквы оцениваем по обычному шрифту
     const chars = [...str], total = it.width || size * 0.5 * chars.length;
@@ -63,7 +85,7 @@ function pageChars(tc, pageH) {
       const x0 = rtl ? t[4] + total - acc - w : t[4] + acc;
       acc += w;
       if (!c.trim()) return;
-      out.push({ t: c, x0, x1: x0 + w, base, size, font: it.fontName, top: base - size * 0.8, bottom: base + size * 0.2 });
+      out.push({ t: c, x0, x1: x0 + w, base, size, font: it.fontName, top: base - size * 0.8, bottom: base + size * 0.2, vis: !rtl });
     });
   }
   return out;
@@ -131,13 +153,29 @@ function latinChord(t) {
   const x = t.replace(/[.,;:!'’]+$/, "").replace(/[АВСЕНДаесмто]/g, c => LAT[c]).replace(/^([A-H][#b]?)т/, "$1m");
   return isChord(x) ? x : t;
 }
+const MIRROR = { "(": ")", ")": "(", "[": "]", "]": "[", "{": "}", "}": "{", "<": ">", ">": "<" };
+const mirror = s => s.replace(/[()[\]{}<>]/g, c => MIRROR[c]);
+// слово иврита -> порядок чтения; скобки зеркалим только у букв, лежавших «как на экране»
+const rtlWord = w => [...w.vis].reverse().join("");
+// если в строке иврита скобки «вывернуты» — ")…(" — значит, PDF хранил их как на экране: разворачиваем
+const fixRtlBrackets = t => /^[^()[\]]*[)\]]/.test(t) ? mirror(t) : t;
+// «(C)D», «)C(D» — альтернативный аккорд в скобках + основной
+const altChord = t => { const x = t.replace(/^\)([^()]+)\((.+)$/, "($1)$2"), m = /^\(([^()]+)\)(.*)$/.exec(x); return m && isChord(m[1]) && (!m[2] || isChord(m[2])) ? x : null; };
 function finishLine(l) {
-  const rl = l.words.filter(w => w.rtl).reduce((a, w) => a + w.vis.length, 0), ll = l.words.filter(w => !w.rtl).reduce((a, w) => a + w.vis.length, 0);
+  // «mF» (m перед буквой аккорда) и одиночные «m», «\» в строке аккордов — остатки невидимого текста
+  let ws = l.words.map(w => { const m = /^(m+)([A-H].*)$/.exec(w.vis); return !w.rtl && m && isChord(latinChord(nch(m[2]))) ? mkWord(w.chars.slice(m[1].length)) : w; });
+  const core = ws.filter(w => !/^(m|\\|\/)$/.test(w.vis));
+  if (core.length && core.length < ws.length && core.every(w => { const t = latinChord(nch(w.vis)); return isChord(t) || CHORD_EXTRA.has(t); })) ws = core;
+  if (ws !== l.words) { l.words = ws; l.chars = ws.flatMap(w => w.chars); }
+  const letters = (w, re) => (w.vis.match(re) || []).length;
+  const rl = l.words.reduce((a, w) => a + letters(w, /[\u0590-\u05FF]/g), 0), ll = l.words.reduce((a, w) => a + letters(w, /[A-Za-z\u0400-\u04FF]/g), 0);
   l.rtl = rl > ll;
   // буквы иврита в PDF лежат «визуально» — переворачиваем в обычный порядок чтения
-  l.text = (l.rtl ? l.words.slice().reverse().map(w => (w.rtl ? [...w.vis].reverse().join("") : w.vis)) : l.words.map(w => w.vis)).join(" ").replace(/[‐‑]/g, "-").replace(/ /g, " ");
-  const toks = l.words.map(w => latinChord(nch(w.vis)));
-  l.isChords = toks.length > 0 && toks.some(isChord) && toks.every(t => isChord(t) || CHORD_EXTRA.has(t));
+  l.text = (l.rtl ? l.words.slice().reverse().map(w => (w.rtl || /^[^\p{L}\d]+$/u.test(w.vis) ? rtlWord(w) : w.vis)) : l.words.map(w => w.vis)).join(" ").replace(/[‐‑]/g, "-").replace(/ /g, " ");
+  if (l.rtl) l.text = fixRtlBrackets(l.text);
+  const toks = l.words.map(w => { const t = latinChord(nch(w.vis)); return isChord(t) ? t : altChord(t) || t; });
+  const chordy = t => isChord(t) || !!altChord(t);
+  l.isChords = toks.length > 0 && toks.some(chordy) && toks.every(t => chordy(t) || CHORD_EXTRA.has(t));
   if (l.isChords) l.words.forEach((w, k) => { if (toks[k] !== nch(w.vis)) w.vis = toks[k]; });
 }
 function makeLine(words) {
@@ -147,7 +185,7 @@ function makeLine(words) {
 
 // --- две колонки ---
 function splitColumns(lines, pageW) {
-  const textWords = l => l.words.filter(w => !isChord(nch(w.vis)));
+  const textWords = l => l.words.filter(w => !isChord(nch(w.vis)) && !altChord(nch(w.vis)));
   let best = null;
   for (let x = Math.floor(pageW * 0.3); x < pageW * 0.7; x += 2) {
     let split = 0, crossing = 0;
@@ -167,7 +205,9 @@ function splitColumns(lines, pageW) {
   const right = lines.filter(l => !isFull(l) && l.words.some(w => w.x0 >= x));
   const bandBottom = Math.max(...right.map(l => l.bottom)) + 1;
   const blocks = []; let L = [], R = [], F = [], continuing = true;
-  const flushCols = () => { if (L.length || R.length) blocks.push(L.concat(R)); L = []; R = []; };
+  const textL = lines.filter(l => !l.isChords && l.text.trim());
+  const pageRtl = textL.filter(l => l.rtl).length > textL.length / 2;
+  const flushCols = () => { if (L.length || R.length) blocks.push(pageRtl ? R.concat(L) : L.concat(R)); L = []; R = []; };
   const flushFull = () => { if (F.length) blocks.push(F); F = []; };
   for (const l of lines) {
     const below = l.top > bandBottom;
@@ -236,7 +276,7 @@ async function parsePdfFile(file) {
   let cols = [], totalChars = 0;
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p), vp = page.getViewport({ scale: 1 });
-    const chars = pageChars(await page.getTextContent(), vp.height);
+    const chars = pageChars(await page.getTextContent(), vp.height, await visibilityTest(page, vp.height));
     totalChars += chars.length;
     const lines = groupLines(chars);
     lines.forEach(l => { l.words = splitWords(l.chars); finishLine(l); });
@@ -293,6 +333,16 @@ function buildSongFromCols(cols, { autowrap = false, metaTitle = "", guessTitle 
       prev = cur;
     }
   }
+  // шапка: в начале только явные метаданные (тональность, темп, авторы, альбом) — переносим в заметки
+  const META = /(סולם|מפעם|קצב|נכתב|מילים ולחן|לחן:|key\b|bpm|tempo|capo|исполнитель|альбом|автор|слова и музыка|тональность|темп\b|\bmajor\b|\bminor\b|мажор|минор|music and lyrics)/i;
+  const head = [];
+  while (out.length && (!out[0].trim() || (!/\[[^\]]+\]/.test(out[0]) && META.test(out[0]) && !SECTION_RE.test(out[0].trim())))) {
+    const h = out.shift().trim(); if (!h) continue;
+    const km = /(?:סולם|key(?:\s+of)?|тональность|тон)\s*:?\s*([A-H][#b]?m?)(?![\w#])/i.exec(h) || /^([A-H][#b]?)\s*(major|minor)/i.exec(h);
+    if (km && !song.key) song.key = km[1] + (/minor/i.test(km[2] || "") ? "m" : "");
+    head.push(fixHebPunct(h));
+  }
+  if (head.length) song.header = head.join(" · ");
   song.lyrics = out.map(fixHebPunct).join("\n").trim().replace(/\n{3,}/g, "\n\n");
   if (!song.title) song.title = (out.map(x => x.replace(CHORD_TAG, "").replace(/\s+/g, " ").trim()).find(x => x && !x.endsWith(":")) || "").replace(/[,.;:!]+$/, "");
   return song;
@@ -334,6 +384,7 @@ async function importPdfFiles(files, onProgress) {
       const wd = ok.find(isW) || ok.find(p => p !== ch) || null;
       const notes = [];
       let lyrics, chart = "", key = "", title = "";
+      const header = (ch || wd || ok[0]).r.header || "";
       if (ch && withLyr(ch)) {
         lyrics = ch.r.lyrics; key = ch.r.key; title = ch.r.titleDetected ? ch.r.title : "";
         if (wd && wd !== ch) {
@@ -350,7 +401,7 @@ async function importPdfFiles(files, onProgress) {
       const alt = title && normLine(title) !== normLine(mainTitle) && !normLine(mainTitle).includes(normLine(title)) && !/аккорд|слова/i.test(title) ? title : "";
       results.push({
         base, files: fs.map(f => f.name), notes,
-        song: { title: mainTitle, title_alt: alt, key: key || guessKey(lyrics + "\n" + chart), lang: detectLang(lyrics + " " + mainTitle), lyrics, chord_chart: chart },
+        song: { title: mainTitle, title_alt: alt, key: key || (ch || ok[0]).r.key || guessKey(lyrics + "\n" + chart), lang: detectLang(lyrics + " " + mainTitle), lyrics, chord_chart: chart, notes: header },
       });
     } catch (e) {
       results.push({ base, error: /load /.test(e.message) ? "Не удалось загрузить модуль чтения PDF (нужен интернет)" : "Не удалось прочитать PDF", files: fs.map(f => f.name) });
